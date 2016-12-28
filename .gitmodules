@@ -1,3 +1,6 @@
 [submodule "luatool"]
 	path = luatool
 	url = https://github.com/4refr0nt/luatool.git
+[submodule "esp-webui"]
+	path = esp-webui
+	url = https://github.com/MarkR42/esp-webui.git
