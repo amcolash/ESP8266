@@ -1,10 +1,19 @@
-focus = 1
-shutter = 2
+focus = 1  -- PIN 4
+shutter = 2  -- PIN 5
 gpio.mode(focus, gpio.OUTPUT)
 gpio.mode(shutter, gpio.OUTPUT)
 
 gpio.write(focus, gpio.HIGH)
 gpio.write(shutter, gpio.HIGH)
+
+content = ""
+
+if file.open("index.html", "r") then
+  content = file.read()
+  file.close()
+end
+
+print(content)
 
 srv=net.createServer(net.TCP)
 srv:listen(80,function(conn)
@@ -20,23 +29,19 @@ srv:listen(80,function(conn)
         _GET[k] = v
       end
     end
-    data = "<title>Remote Shutter</title>";
-    data = data.."<center><h1>Remote Shutter</h1>";
-    data = data.."<a href=\"?req=FOCUS\"><button>FOCUS</button></a><br>";
-    data = data.."<a href=\"?req=SHUTTER\"><button>SHUTTER</button></a>";
-    local _on,_off = "",""
+
 
     if(_GET.req == "FOCUS")then
       gpio.write(focus, gpio.LOW)
-      delay = 2
+      delay = 3
       tmr.alarm(0, delay * 1000, tmr.ALARM_SINGLE, function() gpio.write(focus, gpio.HIGH) end)
     elseif(_GET.req == "SHUTTER")then
       gpio.write(shutter, gpio.LOW)
-      delay = 0.5
+      delay = 2
       tmr.alarm(1, delay * 1000, tmr.ALARM_SINGLE, function() gpio.write(shutter, gpio.HIGH) end)
     end
 
-    client:send(data);
+    client:send(content);
     client:close();
     collectgarbage();
   end)
