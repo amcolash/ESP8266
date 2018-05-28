@@ -6,6 +6,8 @@ Many thanks to nikxha from the ESP8266 forum
 #include <SPI.h>
 #include <MFRC522.h>
 #include <IFTTTMaker.h>
+
+// Include IFTTT key separately
 #include "key.h"
 
 /* wiring the MFRC522 to ESP8266 (ESP-12)
@@ -18,12 +20,14 @@ GND     = GND
 3.3V    = 3.3V
 */
 
-#define RST_PIN  5  // RST-PIN für RC522 - RFID - SPI - Modul GPIO5 
-#define SS_PIN  4  // SDA-PIN für RC522 - RFID - SPI - Modul GPIO4 
+#define RST_PIN 1  // RST-PIN for RC522
+#define SS_PIN  3  // SDA-PIN for RC522
+
+#define LED_PIN 2  // Built in LED
 
 MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
-// Set up IFTTT, IFTTT_KEY defined in separate file
+// Set up IFTTT constants
 #define TRIGGER_ON "lights_on"
 #define TRIGGER_OFF "lights_off"
 #define USE_IFTTT true
@@ -43,9 +47,6 @@ void setup() {
   Serial.begin(115200);    // Initialize serial communications
   delay(250);
   Serial.println(F("Booting...."));
-
-  // Set up led
-  pinMode(2, OUTPUT);
   
   SPI.begin();           // Init SPI bus
   mfrc522.PCD_Init();    // Init MFRC522
@@ -67,56 +68,43 @@ void setup() {
     Serial.println(F("\nWiFi connected"));
   }
 
-  
   Serial.println(F("Ready!"));
 
+  // Set up leds
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);
+
   // Flash LED to know everything is all set
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(2, LOW);
-    delay(250);
-    digitalWrite(2, HIGH);
-    delay(250);
-  }
-  
-//  Serial.println(F("======================================================")); 
-//  Serial.println(F("Scan for Card and print UID:"));
+  blink(5);
 }
 
 void loop() {
-  // Set led based on present card, dimmed at 50%
-  digitalWrite(2, counter > 0 ? LOW: HIGH);
-  
-  // Look for new cards
-  if (!mfrc522.PICC_IsNewCardPresent()) {
-    set_enabled(false);
-    delay(200);
-    return;
-  }
-  
-  // Select one of the cards
-  if (!mfrc522.PICC_ReadCardSerial()) {
-    set_enabled(false);
-    delay(200);
+  /*
+    Look for new cards and try to read current card
+    Run the 2 commands twice to "wake up" idled card? This makes sure
+    that the following value is what we expect
+  */
+  if (mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial()
+    || mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial()) {
+    set_enabled(true);
     return;
   }
 
-  set_enabled(true);
-  
-  // Show some details of the PICC (that is: the tag/card)
-//  Serial.print(F("Card UID:"));
-//  dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-//  Serial.println();
+  set_enabled(false);
 }
 
-// Helper routine to dump a byte array as hex values to Serial
-void dump_byte_array(byte *buffer, byte bufferSize) {
-  for (byte i = 0; i < bufferSize; i++) {
-    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
-    Serial.print(buffer[i], HEX);
+void blink(int num) {
+  for (int i = 0; i < num; i++) {
+    digitalWrite(LED_PIN, LOW);
+    delay(250);
+    digitalWrite(LED_PIN, HIGH);
+    delay(250);
   }
 }
 
 void set_enabled(bool val) {
+  digitalWrite(LED_PIN, val ? LOW : HIGH);
+  
   if (counter == 1 && !val) {
     retries = 10;
     ifttt_trigger(false);
@@ -126,18 +114,20 @@ void set_enabled(bool val) {
   }
 
   if (val) {
-    counter = 50;
+    counter = 25;
   } else {
     if (counter > 1) counter--;
     else counter = 0;
   }
+
+  delay(200);
 }
 
 void ifttt_trigger(bool on) {
   if (!USE_IFTTT) return;
 
-  // faster update of led, don't need to wait for safety delay
-  digitalWrite(2, on ? LOW: HIGH);
+  // faster update of led
+//  blink(3 + (on ? 2 : 0));
   
   Serial.print("Sending: ");
   Serial.print(on);
