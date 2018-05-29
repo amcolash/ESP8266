@@ -1,74 +1,101 @@
 /*
-Many thanks to nikxha from the ESP8266 forum
+Code starting point from: https://github.com/Jorgen-VikingGod/ESP8266-MFRC522
+Thanks to the Arduino community for further support and all of the wonderful
+libraries out there.
 */
 
 #include <ESP8266WiFi.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
+#include <time.h>
+#include <Timezone.h>
 #include <IFTTTMaker.h>
 
 // Include IFTTT key separately
 #include "key.h"
 
+// Include the sunrise/sunset data I collected
+#include "sundata.h"
+
 /* wiring the MFRC522 to ESP8266 (ESP-12)
-RST     = GPIO5
-SDA(SS) = GPIO4 
+RST     = GPIO1
+SDA(SS) = GPIO3 
 MOSI    = GPIO13
 MISO    = GPIO12
 SCK     = GPIO14
-GND     = GND
-3.3V    = 3.3V
 */
 
-#define RST_PIN 1  // RST-PIN for RC522
-#define SS_PIN  3  // SDA-PIN for RC522
-
-#define LED_PIN 2  // Built in LED
-
-MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
+// Define pins
+const int RST_PIN = 1;  // RST-PIN for RC522
+const int SS_PIN = 3;  // SDA/SS-PIN for RC522
+const int LED_PIN = 2;  // Built in LED
 
 // Set up IFTTT constants
-#define TRIGGER_ON "lights_on"
-#define TRIGGER_OFF "lights_off"
-#define USE_IFTTT true
+const char *TRIGGER_ON  = "lights_on";
+const char *TRIGGER_OFF = "lights_off";
+const bool USE_IFTTT = true;
 
+// Set up wifi configuration
+const char *ssid = "Obi-LAN Kenobi";
+const char *pass = "UseTheForce";
+
+// Set up timezone, see: 
+TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -60 * 7};  //UTC -7 hours
+TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -60 * 8};   //UTC -8 hours
+Timezone myTZ(usPDT, usPST);
+TimeChangeRule *tcr;        // pointer to the time change rule, use to get TZ abbrev
+
+// NTP Client
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+
+// MRFC522 instance
+MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
+
+// Set up ifttt
 WiFiClientSecure client;
 IFTTTMaker ifttt(IFTTT_KEY, client);
 
-// Set up wifi configuration
-const char *ssid =  "Obi-LAN Kenobi";
-const char *pass =  "UseTheForce";
-#define USE_WIFI true
-
+// Counters
 int counter = 0;
 int retries = 0;
 
+// Daylight savings time, defined when time acquired
+int DST = 0;
+int sunrise = 0;
+int sunset = 0;
+
 void setup() {
   Serial.begin(115200);    // Initialize serial communications
-  delay(250);
   Serial.println(F("Booting...."));
+  delay(250);
   
-  SPI.begin();           // Init SPI bus
-  mfrc522.PCD_Init();    // Init MFRC522
-  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  Serial.print(F("Connecting to: "));
+  Serial.print(ssid);
 
-  if (USE_WIFI) {
-    Serial.print(F("Connecting to: "));
-    Serial.print(ssid);
+  WiFi.mode(WIFI_STA); //We don't want the ESP to act as an AP
+  WiFi.begin(ssid, pass); // Connect to the configured AP
 
-    WiFi.mode(WIFI_STA); //We don't want the ESP to act as an AP
-    WiFi.begin(ssid, pass); // Connect to the AP
-
-    // No point moving forward if we don't have a connection
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-    
-    Serial.println(F("\nWiFi connected"));
+  // No point moving forward if we don't have a connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
   }
 
-  Serial.println(F("Ready!"));
+  // We have connected to wifi successfully
+  Serial.println(F("\nWiFi connected"));
+
+  // Set up NTP client
+  timeClient.begin();
+
+  // Set up RFID reader
+  delay(200);
+  SPI.begin();           // Init SPI bus
+//  mfrc522.PCD_Init();    // Init MFRC522
+//  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);  // Try to boost antenna gain
+  delay(200);
 
   // Set up leds
   pinMode(LED_PIN, OUTPUT);
@@ -76,21 +103,31 @@ void setup() {
 
   // Flash LED to know everything is all set
   blink(5);
+
+  // All set
+  Serial.println(F("\nReady!"));
 }
 
 void loop() {
-  /*
-    Look for new cards and try to read current card
-    Run the 2 commands twice to "wake up" idled card? This makes sure
-    that the following value is what we expect
-  */
-  if (mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial()
-    || mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial()) {
+  update_time();
+  
+  if (card_present()) {
     set_enabled(true);
     return;
   }
 
   set_enabled(false);
+}
+
+
+/*
+  Look for new cards and try to read current card
+  Run the 2 commands twice to "wake up" idled card? This makes sure
+  that the following value is what we expect
+*/
+bool card_present() {
+  return mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial()
+    || mfrc522.PICC_IsNewCardPresent() || mfrc522.PICC_ReadCardSerial();
 }
 
 void blink(int num) {
@@ -126,8 +163,15 @@ void set_enabled(bool val) {
 void ifttt_trigger(bool on) {
   if (!USE_IFTTT) return;
 
-  // faster update of led
-//  blink(3 + (on ? 2 : 0));
+  // Update sunrise/sunset, check if we actually need to run
+  get_sunrise_sunset();
+  time_t t = now();
+  tm now = gmtime(&t);
+
+  // Simple check based on sunset/sunrise hour (not too picky here with minutes)
+  int shifted_sunrise = (sunrise / 60) + 1;
+  int shifted_sunset = (sunset / 60) - 1;
+  if (on && now.tm_hour >= shifted_sunrise && now.tm_hour < shifted_sunset) return;
   
   Serial.print("Sending: ");
   Serial.print(on);
@@ -143,6 +187,28 @@ void ifttt_trigger(bool on) {
       retries--;
       ifttt_trigger(on);
     }
+  }
+}
+
+time_t get_time_local() {
+  return myTZ.toLocal(now(), &tcr);
+}
+
+void update_time() {
+  // This will only do a "real" update every 60 seconds, shouldn't interfere too much
+  timeClient.update();
+  setTime(timeClient.getEpochTime());
+  DST = myTZ.locIsDST(now()) ? 1 : 0;
+}
+
+void get_sunrise_sunset() {
+  time_t now = get_time_local();
+  struct tm *tmp = gmtime(&now);
+  int day = (tmp->tm_mon * 30.5) + tmp->tm_mday; // approximate day of year
+
+  if (day >= 0 && day <= 366) {
+    sunrise = SUNRISE_DATA[day];
+    sunset = SUNSET_DATA[day];
   }
 }
 
