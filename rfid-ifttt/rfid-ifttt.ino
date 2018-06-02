@@ -20,7 +20,7 @@ libraries out there.
 #include "sundata.h"
 
 /* wiring the MFRC522 to ESP8266 (ESP-12)
-RST     = GPIO1
+RST     = GPIO0
 SDA(SS) = GPIO3 
 MOSI    = GPIO13
 MISO    = GPIO12
@@ -28,9 +28,9 @@ SCK     = GPIO14
 */
 
 // Define pins
-const int RST_PIN = 1;  // RST-PIN for RC522
+const int RST_PIN = 0;  // RST-PIN for RC522
 const int SS_PIN = 3;  // SDA/SS-PIN for RC522
-const int LED_PIN = 2;  // Built in LED
+const int LED_PIN = 2;  // Built in LED (2)
 
 // Set up IFTTT constants
 const char *TRIGGER_ON  = "lights_on";
@@ -93,8 +93,8 @@ void setup() {
   // Set up RFID reader
   delay(200);
   SPI.begin();           // Init SPI bus
-//  mfrc522.PCD_Init();    // Init MFRC522
-//  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);  // Try to boost antenna gain
+  mfrc522.PCD_Init();    // Init MFRC522
+  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);  // Try to boost antenna gain
   delay(200);
 
   // Set up leds
@@ -109,14 +109,11 @@ void setup() {
 }
 
 void loop() {
-  update_time();
-  
-  if (card_present()) {
-    set_enabled(true);
-    return;
-  }
+  // This will only do a "real" update every 60 seconds to keep clock up to date
+  timeClient.update();
 
-  set_enabled(false);
+  // Check for card and keep track of things
+  set_enabled(card_present());
 }
 
 
@@ -165,13 +162,16 @@ void ifttt_trigger(bool on) {
 
   // Update sunrise/sunset, check if we actually need to run
   get_sunrise_sunset();
-  time_t t = now();
-  tm now = gmtime(&t);
+  time_t t = get_time_local();
+  tm *now = gmtime(&t);
 
   // Simple check based on sunset/sunrise hour (not too picky here with minutes)
   int shifted_sunrise = (sunrise / 60) + 1;
   int shifted_sunset = (sunset / 60) - 1;
-  if (on && now.tm_hour >= shifted_sunrise && now.tm_hour < shifted_sunset) return;
+  if (on && now->tm_hour >= shifted_sunrise && now->tm_hour < shifted_sunset) {
+    Serial.println("Failed time check, not turning on lights");
+    return;
+  }
   
   Serial.print("Sending: ");
   Serial.print(on);
@@ -194,16 +194,13 @@ time_t get_time_local() {
   return myTZ.toLocal(now(), &tcr);
 }
 
-void update_time() {
-  // This will only do a "real" update every 60 seconds, shouldn't interfere too much
-  timeClient.update();
+void get_sunrise_sunset() {
+  // update local time here to match NTP client
   setTime(timeClient.getEpochTime());
   DST = myTZ.locIsDST(now()) ? 1 : 0;
-}
-
-void get_sunrise_sunset() {
+  
   time_t now = get_time_local();
-  struct tm *tmp = gmtime(&now);
+  tm *tmp = gmtime(&now);
   int day = (tmp->tm_mon * 30.5) + tmp->tm_mday; // approximate day of year
 
   if (day >= 0 && day <= 366) {
