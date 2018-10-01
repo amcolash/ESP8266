@@ -4,9 +4,7 @@
 #include <ArduinoOTA.h>
 
 #include <IRremoteESP8266.h>
-#include <IRrecv.h>
 #include <IRsend.h>
-#include <IRutils.h>
 
 const char* ssid = "Obi-LAN Kenobi";
 const char* password = "UseTheForce";
@@ -14,12 +12,8 @@ const char* password = "UseTheForce";
 uint64_t OFF_CODE = 0x4CB3748B;
 uint64_t ON_CODE = 0x4CB340BF;
 
-const int RECV_PIN = 12;
-const int SEND_PIN = 13;
-
-IRrecv irrecv(RECV_PIN);
+const int SEND_PIN = 12;
 IRsend irsend(SEND_PIN);
-decode_results results;
 
 ESP8266WebServer server(80);
 
@@ -31,19 +25,12 @@ void setup() {
 
   Serial.begin(115200,SERIAL_8N1,SERIAL_TX_ONLY);
 
-  // Turn on red LED to indicate setup
-  digitalWrite(0, 0);
-  
   setupWifi();
   setupOTA();
   setupServer();
 
-  irrecv.enableIRIn();
   irsend.begin();
 
-  // Setup done, turn off LED
-  digitalWrite(0, 1);
-  
   Serial.println("Ready");
 }
 
@@ -115,6 +102,9 @@ void setupServer() {
   server.on("/on_force", []() { changePower(true, true); });
   server.on("/off_force", []() { changePower(false, true); });
 
+  server.on("/projector_on", []() { projector(true); });
+  server.on("/projector_off", []() { projector(false); });  
+
   server.onNotFound([]() {
     Serial.println("request: /? Not found");
     server.send(404, "text/plain", "Not Found");
@@ -124,13 +114,11 @@ void setupServer() {
 }
 
 void setupPins() {
-  // Pin 0, LED (RED)
   // Pin 2, LED (BLUE)
   // Pin 4, Power LED
   // Pin 5, Power Switch
   // Pin 12, IR
 
-  pinMode(0, OUTPUT);
   pinMode(2, OUTPUT);
   pinMode(4, INPUT);
   pinMode(5, OUTPUT);
@@ -142,15 +130,6 @@ void setupPins() {
 void loop() {
   ArduinoOTA.handle();
   server.handleClient();
-
-  if (irrecv.decode(&results)) {
-    // print() & println() can't handle printing long longs. (uint64_t)
-    serialPrintUint64(results.value, HEX);
-    Serial.println("");
-    irrecv.resume();  // Receive the next value
-
-    irsend.sendNEC(ON_CODE);
-  }
 
 //  digitalWrite(2, digitalRead(4));
 }
@@ -177,6 +156,20 @@ void changePower(bool on, bool forced) {
   }
 
   Serial.println(response);
+}
+
+void projector(bool on) {
+  if (on) {
+    irsend.sendNEC(ON_CODE);
+  } else {
+    irsend.sendNEC(OFF_CODE);
+    delay(100);
+    irsend.sendNEC(OFF_CODE);
+  }
+
+  String response = "Changed projector power to ";
+  response += (on ? "on" : "off");
+  server.send(200, "text/plain", response);
 }
 
 String getCurrentStatus() {
