@@ -18,18 +18,25 @@ IRsend irsend(SEND_PIN);
 ESP8266WebServer server(80);
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Booting");
+  Serial.begin(115200,SERIAL_8N1,SERIAL_TX_ONLY);
+  Serial.println("\nBooting");
 
+  digitalWrite(2, 1);
+
+  Serial.println("Setup Pins");
   setupPins();
 
-  Serial.begin(115200,SERIAL_8N1,SERIAL_TX_ONLY);
-
+  Serial.println("Setup Wifi");
   setupWifi();
+  Serial.println("Setup ota");
   setupOTA();
+  Serial.println("Setup server");
   setupServer();
 
+  Serial.println("Setup ir");
   irsend.begin();
+
+  digitalWrite(2, 0);
 
   Serial.println("Ready");
 }
@@ -131,7 +138,7 @@ void loop() {
   ArduinoOTA.handle();
   server.handleClient();
 
-//  digitalWrite(2, digitalRead(4));
+  digitalWrite(2, digitalRead(4));
 }
 
 void changePower(bool on, bool forced) {
@@ -159,15 +166,16 @@ void changePower(bool on, bool forced) {
 }
 
 void projector(bool on) {
-  if (on) {
-    irsend.sendNEC(ON_CODE);
-  } else {
-    irsend.sendNEC(OFF_CODE);
-    delay(100);
-    irsend.sendNEC(OFF_CODE);
+  // Add in duplicate IR just in case...
+  int count = on ? 2 : 4;
+  uint64_t code = on ? ON_CODE : OFF_CODE;
+
+  for (int i = 0; i < count; i++) {
+    irsend.sendNEC(code);
+    delay(250);
   }
 
-  String response = "Changed projector power to ";
+  String response = "Sent projector power command ";
   response += (on ? "on" : "off");
   server.send(200, "text/plain", response);
 }
