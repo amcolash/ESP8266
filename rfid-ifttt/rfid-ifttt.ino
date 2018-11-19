@@ -12,6 +12,7 @@ libraries out there.
 #include <time.h>
 #include <Timezone.h>
 #include <IFTTTMaker.h>
+#include <ESP8266Ping.h>
 
 // Include IFTTT key separately
 #include "key.h"
@@ -40,6 +41,9 @@ const bool USE_IFTTT = true;
 // Set up wifi configuration
 const char *ssid = "Obi-LAN Kenobi";
 const char *pass = "UseTheForce";
+
+// IP to ping
+IPAddress ip (192, 168, 1, 127);
 
 // Set up timezone, see: 
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -60 * 7};  //UTC -7 hours
@@ -112,10 +116,14 @@ void loop() {
   // This will only do a "real" update every 60 seconds to keep clock up to date
   timeClient.update();
 
-  // Check for card and keep track of things
-  set_enabled(card_present());
+  // Either card or wifi device will turn on the lights, need both to disappear for them to turn off
+  set_enabled(card_present() || device_present());
 }
 
+/* Ping the given device once to see if it is on the wifi network */
+bool device_present() {
+  return Ping.ping(ip, 1);
+}
 
 /*
   Look for new cards and try to read current card
