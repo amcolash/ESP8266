@@ -58,7 +58,7 @@ void setupWifi() {
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
-  if (MDNS.begin("esp8266")) {
+  if (MDNS.begin("esp8266-remote")) {
     Serial.println("MDNS responder started");
   }
 }
@@ -98,12 +98,7 @@ void setupOTA() {
 }
 
 void setupServer() {
-  server.on("/", []() {
-    Serial.println("request: /");
-    String response = getCurrentStatus();
-    response += "Hi There!";
-    server.send(200, "text/plain", response);
-  });
+  server.on("/", []() { sendResponse(getCurrentStatus()); });
 
   // Normal power
   server.on("/on", []() { changePower(true, false); });
@@ -117,8 +112,8 @@ void setupServer() {
   server.on("/projector_off", []() { projector(false); });
   
   server.on("/stereo", []() { stereoPower(); });
-  server.on("/stereo_up", []() { stereoVolume(4); });
-  server.on("/stereo_down", []() { stereoVolume(-4); });
+  server.on("/stereo_up", []() { stereoVolume(1); });
+  server.on("/stereo_down", []() { stereoVolume(-1); });
   server.on("/stereo_volume", []() { stereoVolume(); });
 
   server.onNotFound([]() {
@@ -161,24 +156,19 @@ void changePower(bool on, bool forced) {
   
   if (current == on) {
     response += "Ok";
-    server.send(200, "text/plain", response);
 
     digitalWrite(5, 1);
-    delay(forced ? 5000 : 1000);
+    delay(forced ? 5000 : 1500);
     digitalWrite(5, 0);
   } else {
     response += "Nothing Done";
-    server.send(200, "text/plain", response);
   }
 
+  sendResponse(response);
   Serial.println(response);
 }
 
 void projector(bool on) {
-  String response = "Sent projector power command ";
-  response += (on ? "on" : "off");
-  server.send(200, "text/plain", response);
-
   uint64_t code = on ? ON_CODE : OFF_CODE;
   
   // Add in multiple IR messages just in case...
@@ -188,23 +178,21 @@ void projector(bool on) {
     irsend.sendNEC(code);
     delay(250);
   }
+
+  String response = "Sent projector power command ";
+  response += (on ? "on" : "off");
+  sendResponse(response);
 }
 
 void stereoPower() {
-    String response = "Sent stereo power command";
-    server.send(200, "text/plain", response);
-  
     irsend.sendSony(STEREO_POWER, 12, 5);
+    sendResponse("Send stereo power command");
 }
 
 void stereoVolume() {
   if (server.hasArg("volume")) {
     int volume = server.arg("volume").toInt();
     volume = constrain(volume, 0, 30);
-    
-    String response = "Setting volume to ";
-    response += volume;
-    server.send(200, "text/plain", response);
 
     for (int i = 0; i < 30; i++) {
       irsend.sendSony(STEREO_VOLUME_DOWN, 12, 3);
@@ -215,6 +203,10 @@ void stereoVolume() {
       irsend.sendSony(STEREO_VOLUME_UP, 12, 3);
       delay(100);
     }
+
+    String response = "Setting volume to ";
+    response += volume;
+    sendResponse(response);
   } else {
     server.send(400, "text/plain", "No volume specified");
   }
@@ -226,10 +218,6 @@ void stereoVolume(int steps) {
       steps = constrain(steps, -30, 30);
   }
   
-  String response = "Sent stereo volume command of ";
-  response += steps;
-  server.send(200, "text/plain", response);
-  
   uint64_t code = steps > 0 ? STEREO_VOLUME_UP : STEREO_VOLUME_DOWN;
   if (steps < 0) steps *= -1;
   
@@ -237,6 +225,10 @@ void stereoVolume(int steps) {
     irsend.sendSony(code, 12, 3);
     delay(200);
   }
+  
+  String response = "Sent stereo volume command of ";
+  response += steps;
+  sendResponse(response);
 }
 
 String getCurrentStatus() {
@@ -245,5 +237,13 @@ String getCurrentStatus() {
   response += !current;
   response += "\n";
   return response;
+}
+
+void sendResponse(String response) {
+  // CORS! Yuck this sucks that I need this
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/plain", response);
+
+  Serial.println(response);
 }
 
