@@ -43,7 +43,7 @@ const char *ssid = "Obi-LAN Kenobi";
 const char *pass = "UseTheForce";
 
 // IP to ping
-IPAddress ip (192, 168, 1, 127);
+IPAddress ip (192, 168, 1, 102);
 
 // Set up timezone, see: 
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -60 * 7};  //UTC -7 hours
@@ -145,7 +145,8 @@ void blink(int num) {
 }
 
 void set_enabled(bool val) {
-  digitalWrite(LED_PIN, val ? LOW : HIGH);
+  // Account for a little bit of jitter
+  digitalWrite(LED_PIN, (val || counter > 20) ? LOW : HIGH);
   
   if (counter == 1 && !val) {
     retries = 10;

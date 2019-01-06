@@ -12,6 +12,10 @@ const char* password = "UseTheForce";
 uint64_t OFF_CODE = 0x4CB3748B;
 uint64_t ON_CODE = 0x4CB340BF;
 
+uint64_t STEREO_POWER = 0xA81;
+uint64_t STEREO_VOLUME_UP = 0x481;
+uint64_t STEREO_VOLUME_DOWN = 0xC81;
+
 const int SEND_PIN = 12;
 IRsend irsend(SEND_PIN);
 
@@ -110,7 +114,12 @@ void setupServer() {
   server.on("/off_force", []() { changePower(false, true); });
 
   server.on("/projector_on", []() { projector(true); });
-  server.on("/projector_off", []() { projector(false); });  
+  server.on("/projector_off", []() { projector(false); });
+  
+  server.on("/stereo", []() { stereoPower(); });
+  server.on("/stereo_up", []() { stereoVolume(4); });
+  server.on("/stereo_down", []() { stereoVolume(-4); });
+  server.on("/stereo_volume", []() { stereoVolume(); });
 
   server.onNotFound([]() {
     Serial.println("request: /? Not found");
@@ -166,18 +175,68 @@ void changePower(bool on, bool forced) {
 }
 
 void projector(bool on) {
-  // Add in duplicate IR just in case...
-  int count = on ? 2 : 4;
+  String response = "Sent projector power command ";
+  response += (on ? "on" : "off");
+  server.send(200, "text/plain", response);
+
   uint64_t code = on ? ON_CODE : OFF_CODE;
+  
+  // Add in multiple IR messages just in case...
+  int count = 4;
 
   for (int i = 0; i < count; i++) {
     irsend.sendNEC(code);
     delay(250);
   }
+}
 
-  String response = "Sent projector power command ";
-  response += (on ? "on" : "off");
+void stereoPower() {
+    String response = "Sent stereo power command";
+    server.send(200, "text/plain", response);
+  
+    irsend.sendSony(STEREO_POWER, 12, 5);
+}
+
+void stereoVolume() {
+  if (server.hasArg("volume")) {
+    int volume = server.arg("volume").toInt();
+    volume = constrain(volume, 0, 30);
+    
+    String response = "Setting volume to ";
+    response += volume;
+    server.send(200, "text/plain", response);
+
+    for (int i = 0; i < 30; i++) {
+      irsend.sendSony(STEREO_VOLUME_DOWN, 12, 3);
+      delay(100);
+    }
+
+    for (int i = 0; i < volume; i++) {
+      irsend.sendSony(STEREO_VOLUME_UP, 12, 3);
+      delay(100);
+    }
+  } else {
+    server.send(400, "text/plain", "No volume specified");
+  }
+}
+
+void stereoVolume(int steps) {
+  if (server.hasArg("volume")) {
+      steps = server.arg("volume").toInt();
+      steps = constrain(steps, -30, 30);
+  }
+  
+  String response = "Sent stereo volume command of ";
+  response += steps;
   server.send(200, "text/plain", response);
+  
+  uint64_t code = steps > 0 ? STEREO_VOLUME_UP : STEREO_VOLUME_DOWN;
+  if (steps < 0) steps *= -1;
+  
+  for (int i = 0; i < steps; i++) {
+    irsend.sendSony(code, 12, 3);
+    delay(200);
+  }
 }
 
 String getCurrentStatus() {
