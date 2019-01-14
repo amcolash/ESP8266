@@ -16,6 +16,10 @@ uint64_t STEREO_POWER = 0xA81;
 uint64_t STEREO_VOLUME_UP = 0x481;
 uint64_t STEREO_VOLUME_DOWN = 0xC81;
 
+uint64_t HDMI_SWITCH_CHANNEL_UP = 0xFF7887;
+uint64_t HDMI_SWITCH_CHANNEL_DOWN = 0xFF50AF;
+uint64_t HDMI_SWITCH_CHANNELS[] = { 0xFFD827, 0xFF58A7, 0xFF40BF, 0xFFB04F };
+
 const int SEND_PIN = 12;
 IRsend irsend(SEND_PIN);
 
@@ -115,6 +119,10 @@ void setupServer() {
   server.on("/stereo_up", []() { stereoVolume(1); });
   server.on("/stereo_down", []() { stereoVolume(-1); });
   server.on("/stereo_volume", []() { stereoVolume(); });
+
+  server.on("/hdmi_up", []() { hdmiChannel(1); });
+  server.on("/hdmi_down", []() { hdmiChannel(-1); });
+  server.on("/hdmi", []() { hdmiChannel(); });
 
   server.onNotFound([]() {
     Serial.println("request: /? Not found");
@@ -227,6 +235,35 @@ void stereoVolume(int steps) {
   }
   
   String response = "Sent stereo volume command of ";
+  response += steps;
+  sendResponse(response);
+}
+
+void hdmiChannel() {
+  if (server.hasArg("channel")) {
+      int channel = server.arg("channel").toInt();
+      channel = constrain(channel, 1, 4);
+      uint64_t code = HDMI_SWITCH_CHANNELS[channel - 1];
+      irsend.sendNEC(code, 32, 2);
+      
+      String response = "Changed HDMI channel to ";
+      response += channel;
+      sendResponse(response);
+  } else {
+    server.send(400, "text/plain", "No channel specified"); 
+  }
+}
+
+void hdmiChannel(int steps) {
+  uint64_t code = steps > 0 ? HDMI_SWITCH_CHANNEL_UP : HDMI_SWITCH_CHANNEL_DOWN;
+
+  for (int i = 0; i < steps; i++) {
+    irsend.sendNEC(code, 32, 2);
+    delay(200);
+  }
+
+  String response = "Changed HDMI channel ";
+  response += (steps > 0 ? "up " : "down ");
   response += steps;
   sendResponse(response);
 }
