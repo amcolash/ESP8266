@@ -5,13 +5,13 @@ libraries out there.
 */
 
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <SPI.h>
 #include <MFRC522.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <time.h>
 #include <Timezone.h>
-#include <IFTTTMaker.h>
 #include <ESP8266Ping.h>
 
 // Include IFTTT key separately
@@ -59,16 +59,12 @@ NTPClient timeClient(ntpUDP);
 MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
 // Set up ifttt
-WiFiClientSecure client;
-
-// set sha-1 fingerprint for ifttt. Expires 9/28/20
-const char fingerprint[] PROGMEM = "AA 75 CB 41 2E D5 F9 97 FF 5D A0 8B 7D AC 12 21 08 4B 00 8C";
-
-IFTTTMaker ifttt(IFTTT_KEY, client);
+HTTPClient http;
 
 // Counters
 int counter = 0;
 int retries = 0;
+int delta = 0;
 
 // Daylight savings time, defined when time acquired
 int DST = 0;
@@ -99,14 +95,16 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // Set up NTP client
+  Serial.println("Setting up NTP");
   timeClient.begin();
 
   // Set up RFID reader
-  delay(200);
+  Serial.println("Setting up RFID");
+  delay(100);
   SPI.begin();           // Init SPI bus
   mfrc522.PCD_Init();    // Init MFRC522
   mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);  // Try to boost antenna gain
-  delay(200);
+  delay(100);
 
   // Set up leds
   pinMode(LED_PIN, OUTPUT);
@@ -129,7 +127,9 @@ void loop() {
 
 /* Ping the given device once to see if it is on the wifi network */
 bool device_present() {
-  return Ping.ping(ip, 1);
+  bool result = Ping.ping(ip, 1);
+  if (result) delay(400);
+  return result;
 }
 
 /*
@@ -153,7 +153,16 @@ void blink(int num) {
 
 void set_enabled(bool val) {
   // Account for a little bit of jitter
-  digitalWrite(LED_PIN, (val || counter > 20) ? LOW : HIGH);
+  digitalWrite(LED_PIN, (val || counter > 15) ? LOW : HIGH);
+
+//  Serial.print("Enabled? ");
+//  Serial.print(val);
+//  Serial.print(", ");
+//  Serial.print(counter);
+//  Serial.print(", ");
+//  Serial.println(millis() - delta);
+
+  delta = millis();
   
   if (counter == 1 && !val) {
     retries = 10;
@@ -164,13 +173,11 @@ void set_enabled(bool val) {
   }
 
   if (val) {
-    counter = 25;
+    counter = 20;
   } else {
     if (counter > 1) counter--;
     else counter = 0;
   }
-
-  delay(200);
 }
 
 void ifttt_trigger(bool on) {
@@ -191,22 +198,35 @@ void ifttt_trigger(bool on) {
   
   Serial.print("Sending: ");
   Serial.print(on);
+  Serial.print(", ");
 
-  client.setFingerprint(fingerprint);
-  if(ifttt.triggerEvent(on ? TRIGGER_ON : TRIGGER_OFF)) {
-    Serial.println(", Success!");
-    retries = 0;
-    delay(1000);
-  } else {
-    Serial.println(", Failed!");
-    delay(1000);
-    if (retries > 0) {
-      Serial.print("Retrying... ");
-      Serial.println(retries);
-      retries--;
-      ifttt_trigger(on);
+  String url = "http://maker.ifttt.com/trigger/";
+  url += (on ? TRIGGER_ON : TRIGGER_OFF);
+  url += "/with/key/";
+  url += IFTTT_KEY;
+  
+  http.begin(url);  //Specify request destination
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    if (httpCode == 200) {
+      retries = 0;
+    } else {
+      Serial.println("Failed");
+      delay(1000);
+      if (retries > 0) {
+        Serial.print("Retrying... ");
+        Serial.println(retries);
+        retries--;
+        ifttt_trigger(on);
+      }
     }
+    
+    String payload = http.getString();
+    Serial.println(payload);
   }
+
+  http.end();   //Close connection
 }
 
 time_t get_time_local() {
