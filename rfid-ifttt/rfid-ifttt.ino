@@ -60,6 +60,10 @@ MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
 // Set up ifttt
 WiFiClientSecure client;
+
+// set sha-1 fingerprint for ifttt. Expires 9/28/20
+const char fingerprint[] PROGMEM = "AA 75 CB 41 2E D5 F9 97 FF 5D A0 8B 7D AC 12 21 08 4B 00 8C";
+
 IFTTTMaker ifttt(IFTTT_KEY, client);
 
 // Counters
@@ -90,6 +94,9 @@ void setup() {
 
   // We have connected to wifi successfully
   Serial.println(F("\nWiFi connected"));
+
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
 
   // Set up NTP client
   timeClient.begin();
@@ -184,15 +191,18 @@ void ifttt_trigger(bool on) {
   
   Serial.print("Sending: ");
   Serial.print(on);
-  if(ifttt.triggerEvent(on ? TRIGGER_ON : TRIGGER_OFF, ssid)) {
+
+  client.setFingerprint(fingerprint);
+  if(ifttt.triggerEvent(on ? TRIGGER_ON : TRIGGER_OFF)) {
     Serial.println(", Success!");
     retries = 0;
     delay(1000);
   } else {
     Serial.println(", Failed!");
-    if (retries > 0) Serial.println("Retrying...");
     delay(1000);
     if (retries > 0) {
+      Serial.print("Retrying... ");
+      Serial.println(retries);
       retries--;
       ifttt_trigger(on);
     }
