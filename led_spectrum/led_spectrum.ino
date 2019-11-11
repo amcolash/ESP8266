@@ -1,13 +1,13 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
 #include <WiFiUdp.h>
-#include <ArduinoJson.h>
 #include <NTPClient.h>
+
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
 
 #define double_buffer
 #include <PxMatrix.h>
 #include <Fonts/TomThumb.h>
-
 #include <Ticker.h>
 #include <fix_fft.h>
 
@@ -27,12 +27,6 @@ const String zip = "98103";
 const String currentEndpoint = "http://api.openweathermap.org/data/2.5/weather?zip=" + zip + "&units=imperial&APPID=";
 const String forecastEndpoint = "http://api.openweathermap.org/data/2.5/forecast/daily?zip=" + zip + "&units=imperial&APPID=";
 HTTPClient http;
-
-// JSON buffer based off of article https://randomnerdtutorials.com/decoding-and-encoding-json-with-arduino-or-esp8266/
-const size_t bufferSize = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(1) + 
-    2*JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + 
-    JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(12) + 390;
-DynamicJsonBuffer jsonBuffer(bufferSize);
 
 // Display setup
 #define P_LAT 16
@@ -56,7 +50,6 @@ const unsigned char wifiIcon [] PROGMEM = {
   0x03, 0xc0, 0x1f, 0xf8, 0x78, 0x1e, 0xf0, 0x07, 0xcf, 0xf3, 0x1f, 0xf8, 0x38, 0x1c, 0x13, 0xc8, 
   0x07, 0xe0, 0x06, 0x60, 0x00, 0x00, 0x03, 0xc0, 0x03, 0xc0, 0x03, 0xc0, 0x00, 0x00
 };
-
 
 byte RedLight;
 byte GreenLight;
@@ -182,6 +175,12 @@ void updateCurrentWeather() {
 
   if (httpCode > 0) { //Check for the returning code
       String payload = http.getString();
+
+      // JSON buffer based off of article https://randomnerdtutorials.com/decoding-and-encoding-json-with-arduino-or-esp8266/
+      const size_t bufferSize = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(1) + 
+          2*JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + 
+          JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(12) + 390;
+      DynamicJsonBuffer jsonBuffer(bufferSize);
       JsonObject& root = jsonBuffer.parseObject(payload);
 
       if (!root.success()) {
