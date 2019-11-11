@@ -11,6 +11,7 @@
 #include <Ticker.h>
 #include <fix_fft.h>
 
+/************************* Constants / Globals *************************/
 #include "key.h"
 
 // Set up wifi configuration
@@ -42,8 +43,8 @@ HTTPClient http;
 // Pins for LED MATRIX
 PxMATRIX display(64,32,P_LAT, P_OE,P_A,P_B,P_C,P_D);
 
-uint16_t BLACK = display.color565(0, 0, 0);
-uint16_t LIME = display.color565(20, 255, 20);
+const uint16_t BLACK = display.color565(0, 0, 0);
+const int LIME_HUE = 85;
 
 // 'wifi_small', 16x15px
 const unsigned char wifiIcon [] PROGMEM = {
@@ -56,19 +57,26 @@ byte GreenLight;
 byte BlueLight;
 
 # define BARS 16
-int BAR_SIZE = 64 / BARS;
+const int BAR_SIZE = 64 / BARS;
 
 int8_t data[128], prev[64], lines[BARS], lastLines[BARS];
 int i,val;
 
-float mixFactor = 0.25;
+const float mixFactor = 0.25;
 char timeDisplay[10];
 int temperature = -999;
 
 // roughly 50 updates a second * 60 sec * 60 min (every hour)
-long updateTime = 50 * 60 * 60;
+const long updateTime = 50 * 60 * 60;
 long updateCount = updateTime;
 
+// roughly 50 updates a second * 60 sec * 5 min (every 5 minues)
+const long brightnessTime = 50 * 60 * 5;
+long brightnessCount = brightnessTime;
+int brightness = 255;
+
+
+/************************* Setup *************************/
 
 Ticker display_ticker;
 void display_updater() {
@@ -87,23 +95,6 @@ void setup() {
   for (i=0; i < BARS; i++) { lines[i] = 0; };
 }
 
-void loop() {
-  // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
-  updateData();
-  
-  sampleData();
-
-  display.fillScreen(BLACK);
-  
-  drawBars();
-  drawTime();
-  drawWeather();
-  
-  display.showBuffer();
-  
-  delay(20);
-}
-
 void setupDisplay() {
   // Init display
   display.begin(16);
@@ -115,7 +106,7 @@ void setupDisplay() {
   display_ticker.attach(0.002, display_updater);
 
   // Draw wifi connecting icon
-  display.drawBitmap(24, 9, wifiIcon, 16, 15, LIME);
+  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
   display.showBuffer();
 }
 
@@ -148,6 +139,27 @@ void setupNTP() {
   timeClient.update();
 }
 
+/************************* Loop *************************/
+
+void loop() {
+  // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
+  updateData();
+
+  // Limit updates to brughtness to reduce flicker as well
+  updateBrightness();
+  
+  sampleData();
+
+  display.fillScreen(BLACK);
+  
+  drawBars();
+  drawTime();
+  drawWeather();
+  
+  display.showBuffer();
+  
+  delay(20);
+}
 
 void updateData() {
   updateCount++;
@@ -155,17 +167,6 @@ void updateData() {
     timeClient.update();
     updateCurrentWeather();
     updateCount = 0;
-
-    int hour = timeClient.getHours();
-
-    // tweak these if needed
-    int morning = 7; // AM
-    int evening = 5; // PM
-    int night = 11; // PM
-    
-    if (hour >= (night + 12) || hour < morning) { display.setBrightness(50); }
-    if (hour >= (evening + 12)) { display.setBrightness(200); }
-    else { display.setBrightness(255); }
   }
 }
 
@@ -195,6 +196,27 @@ void updateCurrentWeather() {
   http.end(); //Free the resources
 }
 
+void updateBrightness() {
+  brightnessCount++;
+  if (brightnessCount > brightnessTime) {
+    int hour = timeClient.getHours();
+
+    // tweak these if needed
+    int morning = 7; // AM
+    int evening = 5; // PM
+    int night = 11; // PM
+
+    // Set brightness so it can be used elsewhere (when setting colors...)
+    if (hour >= (night + 12) || hour < morning) brightness = 50;
+    else if (hour >= (evening + 12)) brightness = 170;
+    else brightness = 255;
+
+    display.setBrightness(brightness);
+
+    brightnessCount = 0;
+  }
+}
+
 void sampleData() {
   int total = 0;
   for (i=0; i < 128; i++){
@@ -202,9 +224,7 @@ void sampleData() {
     data[i] = val;
     total += val;
 
-    if (i % 16 == 0) {
-      delay(1);
-    }
+    if (i % 16 == 0) delay(1);
   };
 
   int avg = total / 128;
@@ -223,14 +243,14 @@ void sampleData() {
   }
 }
 
+/************************* Draw *************************/
+
 void drawBars() {
   for (i=0; i < BARS; i++) {
     lines[i] = max((float) 1, lines[i] * mixFactor + lastLines[i] * (1 - mixFactor));
     lastLines[i] = lines[i];
 
-    setLedColorHSV((int) ((float) i / BARS * 255) % 255, 255, 255);
-    uint16_t color = display.color565(RedLight, GreenLight, BlueLight);
-
+    uint16_t color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
     display.fillRect(i*BAR_SIZE, 32 - min(lines[i] + 0, 16), BAR_SIZE, lines[i], color);
 
     lines[i] = 0;
@@ -238,7 +258,7 @@ void drawBars() {
 }
 
 void drawTime() {
-  display.setTextColor(LIME);
+  display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont();
 
   int hour = timeClient.getHours();
@@ -247,10 +267,9 @@ void drawTime() {
   
   if (hour >= 12) {
     am = "PM";
-    if (hour > 12) {
-       hour -= 12; 
-    }
+    if (hour > 12) hour -= 12;
   }
+  if (hour == 0) hour = 12;
 
   display.setCursor(3, 3);
   display.print(hour);
@@ -263,6 +282,7 @@ void drawTime() {
 }
 
 void drawWeather() {
+  display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont(&TomThumb);
 
   if (temperature > -999) {
@@ -274,13 +294,25 @@ void drawWeather() {
   }
 }
 
+/************************* Util *************************/
+
+uint16_t getColor(int hue, int saturation, int value) {
+  if (brightness >= 100) {
+      setLedColorHSV(hue, saturation, value);
+  } else {
+    setLedColorHSV(hue, saturation, value * brightness / 255.);
+  }
+    
+  return display.color565(RedLight, GreenLight, BlueLight);
+}
+
 int getNumberLength(int number) {
   int length = 0;
-  if (number > -10 && number < 10) { length = 1; }
-  else if (number > -100 && number < 100) { length = 2; }
-  else { length = 3; }
+  if (number > -10 && number < 10) length = 1;
+  else if (number > -100 && number < 100) length = 2;
+  else length = 3;
 
-  if (number < 0) { length++; }
+  if (number < 0) length++;
 
   return length;
 }
@@ -288,11 +320,11 @@ int getNumberLength(int number) {
 int numberOfOnes(int number) {
   int count = 0;
   
-  if (abs(number) % 10 == 1) { count++; } // ones
+  if (abs(number) % 10 == 1) count++; // ones
   number /= 10;
-  if (abs(number) % 10 == 1) { count++; } // tens
+  if (abs(number) % 10 == 1) count++; // tens
   number /= 10;
-  if (abs(number) % 100 == 1) { count++; } // hundreds
+  if (abs(number) % 100 == 1) count++; // hundreds
 
   return count;
 }
