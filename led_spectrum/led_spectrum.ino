@@ -1,20 +1,39 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiUdp.h>
+#include <ArduinoJson.h>
+#include <NTPClient.h>
+
 #define double_buffer
 #include <PxMatrix.h>
+#include <Fonts/TomThumb.h>
+
 #include <Ticker.h>
 #include <fix_fft.h>
-#include <ESP8266WiFi.h>
-#include <WiFiUdp.h>
-#include <NTPClient.h>
+
+#include "key.h"
 
 // Set up wifi configuration
 const char *ssid = "Obi-LAN Kenobi";
 const char *pass = "UseTheForce";
 
-// NTP Client
+// NTP Client, -8 is with DST, -7 is w/o DST
 const long utcOffsetInSeconds = -8 * 60 * 60;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
 
+// Open weather map
+const String location = "Seattle,us";
+const String openweatherEndpoint = "http://api.openweathermap.org/data/2.5/weather?q=" + location + "&units=imperial&APPID=";
+HTTPClient http;
+
+// JSON buffer based off of article https://randomnerdtutorials.com/decoding-and-encoding-json-with-arduino-or-esp8266/
+const size_t bufferSize = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(1) + 
+    2*JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + 
+    JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(12) + 390;
+DynamicJsonBuffer jsonBuffer(bufferSize);
+
+// Display setup
 #define P_LAT 16
 #define P_A 5
 #define P_B 4
@@ -24,13 +43,10 @@ NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
 #define P_OE 2
 
 #define SCALE_FACTOR 12  // Direct scaling factor (raise for higher bars, lower for shorter bars)
-const float log_scale = 64./log(64./SCALE_FACTOR + 1.);  // Attempts to create an equivalent to SCALE_FACTOR for log function
 
 // Pins for LED MATRIX
 PxMATRIX display(64,32,P_LAT, P_OE,P_A,P_B,P_C,P_D);
 
-uint16_t RED = display.color565(255, 0, 0);
-uint16_t CYAN = display.color565(0, 255, 255);
 uint16_t BLACK = display.color565(0, 0, 0);
 uint16_t LIME = display.color565(20, 255, 20);
 
@@ -73,8 +89,9 @@ void setup() {
 
   // Init display
   display.begin(16);
-  display.setFastUpdate(true);
   display.flushDisplay();
+  display.setFastUpdate(true);
+  display.setTextWrap(false);
   
   // Paint to display 500x a second
   display_ticker.attach(0.002, display_updater);
@@ -106,6 +123,8 @@ void setup() {
   // Set up NTP client
   Serial.println("Setting up NTP");
   timeClient.begin();
+  delay(200);
+  timeClient.update();
 
   for (i=0; i < 64; i++) { prev[i] = 0; };
   for (i=0; i < BARS; i++) { lines[i] = 0; };
@@ -117,18 +136,57 @@ float colorOffset = 0;
 int idle = 0;
 int averageIdle = 0;
 char timeDisplay[10];
+int temperature = -999;
 
-// roughly 50 updates a second * 60 sec * 60 min * 8 hour
-long ntpUpdateTime = 50 * 60 * 60 * 8;
-long ntpCount = ntpUpdateTime;
+// roughly 50 updates a second * 60 sec * 60 min (every hour)
+long updateTime = 50 * 60 * 60;
+long updateCount = updateTime;
+
+void updateWeather() {
+  http.begin(openweatherEndpoint  + openweatherKey); //Specify the URL
+  int httpCode = http.GET();  //Make the request
+
+  if (httpCode > 0) { //Check for the returning code
+
+      String payload = http.getString();
+      Serial.println(httpCode);
+      Serial.println(payload);
+      JsonObject& root = jsonBuffer.parseObject(payload);
+
+      if (!root.success()) {
+        temperature = -999;
+      } else {
+        temperature = (int) root["main"]["temp"];
+      }
+    }
+
+  else {
+    Serial.println("Error on HTTP request");
+  }
+
+  http.end(); //Free the resources
+}
 
 void loop() {
-  // Updating with ntp is costly and makes the display freeze for a moment, only update once in a while
-  ntpCount++;
-  if (ntpCount > ntpUpdateTime) {
+  // Updating things over wifi is costly and makes the display freeze for a moment, only update once in a while
+  updateCount++;
+  if (updateCount > updateTime) {
     timeClient.update();
-    ntpCount = 0;
+    updateWeather();
+    updateCount = 0;
+
+    int hour = timeClient.getHours();
+
+    // tweak these if needed
+    int morning = 7; // AM
+    int evening = 5; // PM
+    int night = 11; // PM
+    
+    if (hour >= (night + 12) || hour < morning) { display.setBrightness(100); }
+    if (hour >= (evening + 12)) { display.setBrightness(200); }
+    else { display.setBrightness(255); }
   }
+
   
   int total = 0;
   for (i=0; i < 128; i++){
@@ -182,19 +240,39 @@ void loop() {
     lines[i] = 0;
   }
 
-  char* am = "AM";
-  int hour = timeClient.getHours();
-  if (hour >= 12) {
-    hour -= 12;
-    am = "PM";
-  }
-  int minute = timeClient.getMinutes();
-
-  sprintf(timeDisplay, "%d:%02d%s", hour, minute, am);
-  
   display.setTextColor(LIME);
-  display.setCursor((64 - (strlen(timeDisplay) * 6)) / 2, 4);
-  display.print(timeDisplay);
+  display.setFont();
+
+  int hour = timeClient.getHours();
+  int minute = timeClient.getMinutes();
+  char* am = "AM";
+  
+  if (hour >= 12) {
+    am = "PM";
+    if (hour > 12) {
+       hour -= 12; 
+    }
+  }
+
+  display.setCursor(3, 4);
+  display.print(hour);
+  display.setCursor(display.getCursorX() - 2, display.getCursorY());
+  display.print(":");
+  display.setCursor(display.getCursorX() - 2, display.getCursorY());
+  display.printf("%02d", minute);
+  display.setCursor(display.getCursorX() + 1, display.getCursorY());
+  display.print(am);
+
+  if (temperature > -999) {
+    if (temperature < 0 || temperature > 99) { display.setCursor(64 - 4*4 - 2, 3); }
+    else { display.setCursor(64 - 4*3 - 2, 3); }
+
+    display.setFont(&TomThumb);
+    display.print(temperature);
+    
+    display.setCursor(display.getCursorX(), display.getCursorY() - 1);
+    display.print("o");
+  }
   
   display.showBuffer();
 //  colorOffset += 0.01;
