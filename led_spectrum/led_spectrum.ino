@@ -84,6 +84,30 @@ void display_updater() {
 void setup() {
   Serial.begin(115200);
 
+  setupDisplay();
+  setupWifi();
+  setupNTP();
+
+  // Zero out arrays (just in case)
+  for (i=0; i < 64; i++) { prev[i] = 0; };
+  for (i=0; i < BARS; i++) { lines[i] = 0; };
+}
+
+void loop() {
+  // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
+  updateData();
+  
+  sampleData();
+
+  display.fillScreen(BLACK);
+  drawBars();
+  drawTime();
+  display.showBuffer();
+  
+  delay(20);
+}
+
+void setupDisplay() {
   // Init display
   display.begin(16);
   display.flushDisplay();
@@ -94,10 +118,11 @@ void setup() {
   display_ticker.attach(0.002, display_updater);
 
   // Draw wifi connecting icon
-//  display.drawBitmap(19, 4, wifiIcon, 26, 24, LIME);
   display.drawBitmap(24, 9, wifiIcon, 16, 15, LIME);
   display.showBuffer();
+}
 
+void setupWifi() {
   // Start up wifi
   Serial.print(F("\nConnecting to: "));
   Serial.println(ssid);
@@ -116,15 +141,35 @@ void setup() {
 
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+}
 
+void setupNTP() {
   // Set up NTP client
   Serial.println("Setting up NTP");
   timeClient.begin();
   delay(200);
   timeClient.update();
+}
 
-  for (i=0; i < 64; i++) { prev[i] = 0; };
-  for (i=0; i < BARS; i++) { lines[i] = 0; };
+
+void updateData() {
+  updateCount++;
+  if (updateCount > updateTime) {
+    timeClient.update();
+    updateWeather();
+    updateCount = 0;
+
+    int hour = timeClient.getHours();
+
+    // tweak these if needed
+    int morning = 7; // AM
+    int evening = 5; // PM
+    int night = 11; // PM
+    
+    if (hour >= (night + 12) || hour < morning) { display.setBrightness(100); }
+    if (hour >= (evening + 12)) { display.setBrightness(200); }
+    else { display.setBrightness(255); }
+  }
 }
 
 void updateWeather() {
@@ -152,26 +197,7 @@ void updateWeather() {
   http.end(); //Free the resources
 }
 
-void loop() {
-  // Updating things over wifi is costly and makes the display freeze for a moment, only update once in a while
-  updateCount++;
-  if (updateCount > updateTime) {
-    timeClient.update();
-    updateWeather();
-    updateCount = 0;
-
-    int hour = timeClient.getHours();
-
-    // tweak these if needed
-    int morning = 7; // AM
-    int evening = 5; // PM
-    int night = 11; // PM
-    
-    if (hour >= (night + 12) || hour < morning) { display.setBrightness(100); }
-    if (hour >= (evening + 12)) { display.setBrightness(200); }
-    else { display.setBrightness(255); }
-  }
-  
+void sampleData() {
   int total = 0;
   for (i=0; i < 128; i++){
     val = (analogRead(A0) >> 2) - 128;  // fit to 8 bit int
@@ -197,9 +223,9 @@ void loop() {
 
     lines[i / BAR_SIZE] += (data[i] / BAR_SIZE);
   }
+}
 
-  display.fillScreen(BLACK);
-  
+void drawBars() {
   for (i=0; i < BARS; i++) {
     lines[i] = max((float) 1, lines[i] * mixFactor + lastLines[i] * (1 - mixFactor));
     lastLines[i] = lines[i];
@@ -211,7 +237,9 @@ void loop() {
 
     lines[i] = 0;
   }
+}
 
+void drawTime() {
   display.setTextColor(LIME);
   display.setFont();
 
@@ -245,10 +273,6 @@ void loop() {
     display.setCursor(display.getCursorX(), display.getCursorY() - 1);
     display.print("o");
   }
-  
-  display.showBuffer();
-  
-  delay(20);
 }
 
 // Not quite sure about this one...
