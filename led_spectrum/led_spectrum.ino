@@ -23,8 +23,9 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
 
 // Open weather map
-const String location = "Seattle,us";
-const String openweatherEndpoint = "http://api.openweathermap.org/data/2.5/weather?q=" + location + "&units=imperial&APPID=";
+const String zip = "98103";
+const String currentEndpoint = "http://api.openweathermap.org/data/2.5/weather?zip=" + zip + "&units=imperial&APPID=";
+const String forecastEndpoint = "http://api.openweathermap.org/data/2.5/forecast/daily?zip=" + zip + "&units=imperial&APPID=";
 HTTPClient http;
 
 // JSON buffer based off of article https://randomnerdtutorials.com/decoding-and-encoding-json-with-arduino-or-esp8266/
@@ -100,8 +101,11 @@ void loop() {
   sampleData();
 
   display.fillScreen(BLACK);
+  
   drawBars();
   drawTime();
+  drawWeather();
+  
   display.showBuffer();
   
   delay(20);
@@ -156,7 +160,7 @@ void updateData() {
   updateCount++;
   if (updateCount > updateTime) {
     timeClient.update();
-    updateWeather();
+    updateCurrentWeather();
     updateCount = 0;
 
     int hour = timeClient.getHours();
@@ -166,21 +170,18 @@ void updateData() {
     int evening = 5; // PM
     int night = 11; // PM
     
-    if (hour >= (night + 12) || hour < morning) { display.setBrightness(100); }
+    if (hour >= (night + 12) || hour < morning) { display.setBrightness(50); }
     if (hour >= (evening + 12)) { display.setBrightness(200); }
     else { display.setBrightness(255); }
   }
 }
 
-void updateWeather() {
-  http.begin(openweatherEndpoint  + openweatherKey); //Specify the URL
+void updateCurrentWeather() {
+  http.begin(currentEndpoint  + openweatherKey); //Specify the URL
   int httpCode = http.GET();  //Make the request
 
   if (httpCode > 0) { //Check for the returning code
-
       String payload = http.getString();
-      Serial.println(httpCode);
-      Serial.println(payload);
       JsonObject& root = jsonBuffer.parseObject(payload);
 
       if (!root.success()) {
@@ -188,10 +189,8 @@ void updateWeather() {
       } else {
         temperature = (int) root["main"]["temp"];
       }
-    }
-
-  else {
-    Serial.println("Error on HTTP request");
+  } else {
+    temperature = -999;
   }
 
   http.end(); //Free the resources
@@ -232,7 +231,7 @@ void drawBars() {
 
     setLedColorHSV((int) ((float) i / BARS * 255) % 255, 255, 255);
     uint16_t color = display.color565(RedLight, GreenLight, BlueLight);
-    
+
     display.fillRect(i*BAR_SIZE, 32 - min(lines[i] + 0, 16), BAR_SIZE, lines[i], color);
 
     lines[i] = 0;
@@ -254,7 +253,7 @@ void drawTime() {
     }
   }
 
-  display.setCursor(3, 4);
+  display.setCursor(3, 3);
   display.print(hour);
   display.setCursor(display.getCursorX() - 2, display.getCursorY());
   display.print(":");
@@ -262,17 +261,41 @@ void drawTime() {
   display.printf("%02d", minute);
   display.setCursor(display.getCursorX() + 1, display.getCursorY());
   display.print(am);
+}
+
+void drawWeather() {
+  display.setFont(&TomThumb);
 
   if (temperature > -999) {
-    if (temperature < 0 || temperature > 99) { display.setCursor(64 - 4*4 - 2, 3); }
-    else { display.setCursor(64 - 4*3 - 2, 3); }
-
-    display.setFont(&TomThumb);
+    display.setCursor(64 - 4*getNumberLength(temperature) - 6 + numberOfOnes(temperature), 8);
+  
     display.print(temperature);
-    
     display.setCursor(display.getCursorX(), display.getCursorY() - 1);
     display.print("o");
   }
+}
+
+int getNumberLength(int number) {
+  int length = 0;
+  if (number > -10 && number < 10) { length = 1; }
+  else if (number > -100 && number < 100) { length = 2; }
+  else { length = 3; }
+
+  if (number < 0) { length++; }
+
+  return length;
+}
+
+int numberOfOnes(int number) {
+  int count = 0;
+  
+  if (abs(number) % 10 == 1) { count++; } // ones
+  number /= 10;
+  if (abs(number) % 10 == 1) { count++; } // tens
+  number /= 10;
+  if (abs(number) % 100 == 1) { count++; } // hundreds
+
+  return count;
 }
 
 // Not quite sure about this one...
