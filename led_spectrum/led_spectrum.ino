@@ -66,12 +66,12 @@ const float mixFactor = 0.25;
 char timeDisplay[10];
 int temperature = -999;
 
-// roughly 50 updates a second * 60 sec * 60 min (every hour)
-const long updateTime = 50 * 60 * 60;
+// roughly 50 (40ish due to sampling) updates a second * 60 sec * 60 min (every hour)
+const long updateTime = 40 * 60 * 60;
 long updateCount = updateTime;
 
-// roughly 50 updates a second * 60 sec * 5 min (every 5 minues)
-const long brightnessTime = 50 * 60 * 5;
+// roughly 50 (40ish due to sampling) updates a second * 60 sec * 5 min (every 5 minues)
+const long brightnessTime = 40 * 60 * 5;
 long brightnessCount = brightnessTime;
 int brightness = 255;
 
