@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <Wire.h>
 
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>
@@ -9,16 +10,11 @@
 #include <PxMatrix.h>
 #include <Fonts/TomThumb.h>
 #include <Ticker.h>
-#include <fix_fft.h>
 
 /************************* Constants / Globals *************************/
 #include "key.h"
 
-// Set up wifi configuration
-const char *ssid = "Obi-LAN Kenobi";
-const char *pass = "UseTheForce";
-
-// NTP Client, -8 is with DST, -7 is w/o DST
+// NTP Client, -8 is w/o DST, -7 is with DST
 const long utcOffsetInSeconds = -8 * 60 * 60;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
@@ -60,21 +56,22 @@ byte BlueLight;
 const int BAR_SIZE = 64 / BARS;
 
 int8_t data[128], prev[64], lines[BARS], lastLines[BARS];
-int i,val;
+int i, val, sum;
+float avg;
 
-const float mixFactor = 0.25;
+const float positiveMixFactor = 0.2;
+const float negativeMixFactor = 0.01;
 char timeDisplay[10];
 int temperature = -999;
 
-// roughly 50 (40ish due to sampling) updates a second * 60 sec * 60 min (every hour)
-const long updateTime = 40 * 60 * 60;
+// roughly 60 updates a second * 60 sec * 60 min (every hour)
+const long updateTime = 60 * 60 * 60;
 long updateCount = updateTime;
 
-// roughly 50 (40ish due to sampling) updates a second * 60 sec * 5 min (every 5 minues)
-const long brightnessTime = 40 * 60 * 5;
+// roughly 60 updates a second * 60 sec * 5 min (every 5 minues)
+const long brightnessTime = 60 * 60 * 5;
 long brightnessCount = brightnessTime;
 int brightness = 255;
-
 
 /************************* Setup *************************/
 
@@ -85,6 +82,14 @@ void display_updater() {
 
 void setup() {
   Serial.begin(115200);
+  while (!Serial);
+  Serial.println();
+
+  // Set RX pin as standard GPIO
+  pinMode(RX, FUNCTION_3);
+
+  // Set up I2C for ads with custom pins
+  Wire.begin(D3, RX); // SDA,SCL
 
   setupDisplay();
   setupWifi();
@@ -140,6 +145,7 @@ void setupNTP() {
 }
 
 /************************* Loop *************************/
+bool first = true;
 
 void loop() {
   // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
@@ -147,6 +153,11 @@ void loop() {
 
   // Limit updates to brughtness to reduce flicker as well
   updateBrightness();
+
+  if (first) {
+    Serial.println("Updated data and all set");
+    first = false;
+  }
   
   sampleData();
 
@@ -158,7 +169,7 @@ void loop() {
   
   display.showBuffer();
   
-  delay(20);
+  delay(15);
 }
 
 void updateData() {
@@ -217,40 +228,74 @@ void updateBrightness() {
   }
 }
 
+int minimum = 4095;
+int maximum = 0;
 void sampleData() {
-  int total = 0;
-  for (i=0; i < 128; i++){
-    val = (analogRead(A0) >> 2) - 128;  // fit to 8 bit int
-    data[i] = val;
-    total += val;
+  Wire.requestFrom(1, 17);
 
-    if (i % 16 == 0) delay(1);
-  };
+  bool gotData = Wire.available();
+  byte data;
+  i = 0;
+  while (Wire.available()) {
+    data = Wire.read();
 
-  int avg = total / 128;
+    if (i < 16) {
+      // fft data for 1st 16 bytes
+      
+      // max bar height is 16, fixes really tall bars in some cases (which are out of the view)
+      lines[i] = min((int) data, 16);
+    } else {
+      // light sensor data for 17th byte
+    }
 
-  for (i=0; i < 128; i++){
-    data[i] -= avg;
+    i++;
+    Serial.print(data);
+    Serial.print(" ");
   }
+  if (gotData) Serial.println();
 
-  fix_fftr(data,7,0);
-  
-  for (i=0; i < 64; i++){
-    if(data[i] < 0) data[i] = 0;
-    else data[i] *= SCALE_FACTOR;
-
-    lines[i / BAR_SIZE] += (data[i] / BAR_SIZE);
+  // put bars into an invalid state if no I2C connection
+  if (!gotData) {
+    for (i = 0; i < BARS; i++) {
+      lines[i] = -1;
+    }
   }
 }
 
 /************************* Draw *************************/
 
 void drawBars() {
+  sum = 0;
+  for (i = 0; i < BARS; i++) {
+    sum += lines[i];
+  }
+  avg = sum / BARS;
+
+  // basic and naive noise and signal filtering
+  if (avg > 0 && avg < 3) {
+    for (i = 0; i < BARS; i++) {
+      lines[i] = 1;
+    }
+  }
+  
   for (i=0; i < BARS; i++) {
-    lines[i] = max((float) 1, lines[i] * mixFactor + lastLines[i] * (1 - mixFactor));
+    uint16_t color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
+
+    // If we can't talk to I2C, red error bar
+    if (lines[i] == -1) {
+      color = getColor(0, 255, 255);
+      lines[i] = 1;
+    }
+    
+    // Positive (upwards) movement is quicker than negative (downwards) movement
+    if (lines[i] > lastLines[i]) {
+      lines[i] = max((float) 1, lines[i] * positiveMixFactor + lastLines[i] * (1 - positiveMixFactor));
+    } else {
+      lines[i] = max((float) 1, lines[i] * negativeMixFactor + lastLines[i] * (1 - negativeMixFactor));  
+    }
+    
     lastLines[i] = lines[i];
 
-    uint16_t color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
     display.fillRect(i*BAR_SIZE, 32 - min(lines[i] + 0, 16), BAR_SIZE, lines[i], color);
 
     lines[i] = 0;
