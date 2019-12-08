@@ -59,7 +59,7 @@ const int BAR_SIZE = 64 / BARS;
 int8_t lines[BARS];
 float lastLines[BARS];
 int i, val, sum;
-float avg, floatVal;
+float avg, floatVal, runningAvg;
 
 const float positiveMixFactor = 0.2;
 const float negativeMixFactor = 0.07;
@@ -95,8 +95,10 @@ void setup() {
   setupNTP();
 
   // Zero out arrays (just in case)
-  for (i=0; i < BARS; i++) { lines[i] = -1; };
-  for (i=0; i < BARS; i++) { lastLines[i] = -1; };
+  for (i=0; i < BARS; i++) {
+    lines[i] = -1;
+    lastLines[i] = -1;
+  };
 }
 
 void setupDisplay() {
@@ -224,7 +226,6 @@ void sampleData() {
       lines[i] = min(val, 16);
     } else {
       // light sensor data for 17th byte
-
       // found these magic numbers based off of my own ambient light
       val = max(10, (int) (0.004 * val * val));
 
@@ -254,16 +255,13 @@ void sampleData() {
 uint16_t color;
 void drawBars() {
   sum = 0;
-  for (i = 0; i < BARS; i++) {
+  // ignore band 1 from the sum to try and filter more out
+  for (i = 1; i < BARS; i++) {
     sum += lines[i];
   }
   avg = sum / BARS;
+  runningAvg = runningAvg * 0.95 + avg * 0.05;
 
-  // basic and naive noise and signal filtering
-  if (avg > 0 && avg < 3) {
-    for (i = 0; i < BARS; i++) { lines[i] = 1; }
-  }
-  
   for (i=0; i < BARS; i++) {
     color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
 
@@ -282,6 +280,12 @@ void drawBars() {
     } else {
       floatVal = floatVal * negativeMixFactor + lastLines[i] * (1 - negativeMixFactor);
     }
+
+    // If not much is going on, flatline the whole thing (avg silence is about 1.1-1.3), music > 2 usually
+    if (runningAvg < 1.4) {
+      floatVal = 1;
+    }
+    
     floatVal = constrain(floatVal, 1, 14);
     lastLines[i] = floatVal;
     
