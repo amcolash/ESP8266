@@ -221,7 +221,7 @@ void sampleData() {
       lines[i] = min(val, 16);
     } else {
       // light sensor data for 17th byte
-      val = max((int) (d * 0.75), 10);
+      val = max((int) (val * 0.75), 10);
 
       brightness = 0.95 * brightness + 0.05 * val;
       
@@ -233,7 +233,7 @@ void sampleData() {
     i++;
 
     if (debugData) {
-      Serial.print(d);
+      Serial.print(val);
       Serial.print(" ");
     }
   }
