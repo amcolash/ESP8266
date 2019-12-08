@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <time.h>
 #include <Wire.h>
 
 #include <ESP8266HTTPClient.h>
@@ -55,12 +56,13 @@ byte BlueLight;
 # define BARS 16
 const int BAR_SIZE = 64 / BARS;
 
-int8_t lines[BARS], lastLines[BARS];
+int8_t lines[BARS];
+float lastLines[BARS];
 int i, val, sum;
-float avg;
+float avg, floatVal;
 
 const float positiveMixFactor = 0.2;
-const float negativeMixFactor = 0.01;
+const float negativeMixFactor = 0.07;
 char timeDisplay[10];
 int temperature = -999;
 
@@ -161,6 +163,7 @@ void loop() {
   
   drawBars();
   drawTime();
+  drawDate();
   drawWeather();
   
   display.showBuffer();
@@ -221,7 +224,9 @@ void sampleData() {
       lines[i] = min(val, 16);
     } else {
       // light sensor data for 17th byte
-      val = max((int) (val * 0.75), 10);
+
+      // found these magic numbers based off of my own ambient light
+      val = max(10, (int) (0.004 * val * val));
 
       brightness = 0.95 * brightness + 0.05 * val;
       
@@ -232,10 +237,7 @@ void sampleData() {
 
     i++;
 
-    if (debugData) {
-      Serial.print(val);
-      Serial.print(" ");
-    }
+    if (debugData) Serial.printf("%d ", val);
   }
   if (debugData && gotData) Serial.println();
 
@@ -249,6 +251,7 @@ void sampleData() {
 
 /************************* Draw *************************/
 
+uint16_t color;
 void drawBars() {
   sum = 0;
   for (i = 0; i < BARS; i++) {
@@ -258,30 +261,32 @@ void drawBars() {
 
   // basic and naive noise and signal filtering
   if (avg > 0 && avg < 3) {
-    for (i = 0; i < BARS; i++) {
-      lines[i] = 1;
-    }
+    for (i = 0; i < BARS; i++) { lines[i] = 1; }
   }
   
   for (i=0; i < BARS; i++) {
-    uint16_t color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
+    color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
 
+    // use a float to keep track of things so that the bars mix well between frames
+    floatVal = lines[i];
+    
     // If we can't talk to I2C, red error bar
-    if (lines[i] == -1) {
+    if (floatVal == -1) {
       color = getColor(0, 255, 255);
-      lines[i] = 1;
+      floatVal = 1;
     }
     
     // Positive (upwards) movement is quicker than negative (downwards) movement
-    if (lines[i] > lastLines[i]) {
-      lines[i] = max((float) 1, lines[i] * positiveMixFactor + lastLines[i] * (1 - positiveMixFactor));
+    if (floatVal > lastLines[i]) {
+      floatVal = floatVal * positiveMixFactor + lastLines[i] * (1 - positiveMixFactor);
     } else {
-      lines[i] = max((float) 1, lines[i] * negativeMixFactor + lastLines[i] * (1 - negativeMixFactor));  
+      floatVal = floatVal * negativeMixFactor + lastLines[i] * (1 - negativeMixFactor);
     }
+    floatVal = constrain(floatVal, 1, 14);
+    lastLines[i] = floatVal;
     
-    lastLines[i] = lines[i];
-
-    display.fillRect(i*BAR_SIZE, 32 - min(lines[i] + 0, 16), BAR_SIZE, lines[i], color);
+    val = floor(floatVal);
+    display.fillRect(i*BAR_SIZE, 32 - val, BAR_SIZE, val, color);
 
     lines[i] = 0;
   }
@@ -290,13 +295,16 @@ void drawBars() {
 #define AM "AM"
 #define PM "PM"
 char* am;
+time_t rawtime;
+struct tm *ti;
+uint8_t day, month, minute, hour;
 
 void drawTime() {
   display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont();
 
-  int hour = timeClient.getHours();
-  int minute = timeClient.getMinutes();
+  hour = timeClient.getHours();
+  minute = timeClient.getMinutes();
   
   am = AM;
   if (hour >= 12) {
@@ -305,7 +313,7 @@ void drawTime() {
   }
   if (hour == 0) hour = 12;
 
-  display.setCursor(3, 3);
+  display.setCursor(2 - (hour > 9 ? 1 : 0), 2);
   display.print(hour);
   display.setCursor(display.getCursorX() - 2, display.getCursorY());
   display.print(":");
@@ -315,12 +323,26 @@ void drawTime() {
   display.print(am);
 }
 
+void drawDate() {
+  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setFont(&TomThumb);
+
+  rawtime = timeClient.getEpochTime();
+  ti = localtime(&rawtime);
+
+  day = ti->tm_mday;
+  month = ti->tm_mon + 1;
+  
+  display.setCursor(2, 16);
+  display.printf("%d/%d", month, day);
+}
+
 void drawWeather() {
   display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont(&TomThumb);
 
   if (temperature > -999) {
-    display.setCursor(64 - 4*getNumberLength(temperature) - 6 + numberOfOnes(temperature), 8);
+    display.setCursor(65 - 4*getNumberLength(temperature) - 6 + numberOfOnes(temperature), 7);
   
     display.print(temperature);
     display.setCursor(display.getCursorX(), display.getCursorY() - 1);
