@@ -55,7 +55,7 @@ byte BlueLight;
 # define BARS 16
 const int BAR_SIZE = 64 / BARS;
 
-int8_t data[128], prev[64], lines[BARS], lastLines[BARS];
+int8_t lines[BARS], lastLines[BARS];
 int i, val, sum;
 float avg;
 
@@ -68,16 +68,13 @@ int temperature = -999;
 const long updateTime = 60 * 60 * 60;
 long updateCount = updateTime;
 
-// roughly 60 updates a second * 60 sec * 5 min (every 5 minues)
-const long brightnessTime = 60 * 60 * 5;
-long brightnessCount = brightnessTime;
-int brightness = 255;
+int brightness = 100;
 
 /************************* Setup *************************/
 
 Ticker display_ticker;
 void display_updater() {
-  display.display(0);
+  display.display(30);
 }
 
 void setup() {
@@ -96,8 +93,8 @@ void setup() {
   setupNTP();
 
   // Zero out arrays (just in case)
-  for (i=0; i < 64; i++) { prev[i] = 0; };
-  for (i=0; i < BARS; i++) { lines[i] = 0; };
+  for (i=0; i < BARS; i++) { lines[i] = -1; };
+  for (i=0; i < BARS; i++) { lastLines[i] = -1; };
 }
 
 void setupDisplay() {
@@ -106,6 +103,7 @@ void setupDisplay() {
   display.flushDisplay();
   display.setFastUpdate(true);
   display.setTextWrap(false);
+  display.setBrightness(brightness);
   
   // Paint to display 500x a second
   display_ticker.attach(0.002, display_updater);
@@ -150,10 +148,7 @@ bool first = true;
 void loop() {
   // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
   updateData();
-
-  // Limit updates to brughtness to reduce flicker as well
-  updateBrightness();
-
+  
   if (first) {
     Serial.println("Updated data and all set");
     first = false;
@@ -161,7 +156,8 @@ void loop() {
   
   sampleData();
 
-  display.fillScreen(BLACK);
+  // DO NOT USE FILL SCREEN - VERY EXPENSIVE (12x worse)!
+  display.clearDisplay();
   
   drawBars();
   drawTime();
@@ -207,52 +203,41 @@ void updateCurrentWeather() {
   http.end(); //Free the resources
 }
 
-void updateBrightness() {
-  brightnessCount++;
-  if (brightnessCount > brightnessTime) {
-    int hour = timeClient.getHours();
+#define debugData false
+bool gotData;
 
-    // tweak these if needed
-    int morning = 7; // AM
-    int evening = 5; // PM
-    int night = 11; // PM
-
-    // Set brightness so it can be used elsewhere (when setting colors...)
-    if (hour >= (night + 12) || hour < morning) brightness = 50;
-    else if (hour >= (evening + 12)) brightness = 170;
-    else brightness = 255;
-
-    display.setBrightness(brightness);
-
-    brightnessCount = 0;
-  }
-}
-
-int minimum = 4095;
-int maximum = 0;
 void sampleData() {
   Wire.requestFrom(1, 17);
 
-  bool gotData = Wire.available();
-  byte data;
+  gotData = Wire.available();
   i = 0;
   while (Wire.available()) {
-    data = Wire.read();
+    val = (int) Wire.read();
 
     if (i < 16) {
       // fft data for 1st 16 bytes
       
       // max bar height is 16, fixes really tall bars in some cases (which are out of the view)
-      lines[i] = min((int) data, 16);
+      lines[i] = min(val, 16);
     } else {
       // light sensor data for 17th byte
+      val = max((int) (d * 0.75), 10);
+
+      brightness = 0.95 * brightness + 0.05 * val;
+      
+      display.setBrightness(brightness);
+
+      if (debugData) Serial.println(brightness);
     }
 
     i++;
-    Serial.print(data);
-    Serial.print(" ");
+
+    if (debugData) {
+      Serial.print(d);
+      Serial.print(" ");
+    }
   }
-  if (gotData) Serial.println();
+  if (debugData && gotData) Serial.println();
 
   // put bars into an invalid state if no I2C connection
   if (!gotData) {
@@ -302,16 +287,20 @@ void drawBars() {
   }
 }
 
+#define AM "AM"
+#define PM "PM"
+char* am;
+
 void drawTime() {
   display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont();
 
   int hour = timeClient.getHours();
   int minute = timeClient.getMinutes();
-  char* am = "AM";
   
+  am = AM;
   if (hour >= 12) {
-    am = "PM";
+    am = PM;
     if (hour > 12) hour -= 12;
   }
   if (hour == 0) hour = 12;
@@ -342,11 +331,8 @@ void drawWeather() {
 /************************* Util *************************/
 
 uint16_t getColor(int hue, int saturation, int value) {
-  if (brightness >= 100) {
-      setLedColorHSV(hue, saturation, value);
-  } else {
-    setLedColorHSV(hue, saturation, value * brightness / 255.);
-  }
+    value = (int) (0.5 * value + 0.5 * value * brightness / 255.);
+    setLedColorHSV(hue, saturation, value);
     
   return display.color565(RedLight, GreenLight, BlueLight);
 }
