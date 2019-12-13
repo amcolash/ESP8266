@@ -20,6 +20,9 @@ const long utcOffsetInSeconds = -8 * 60 * 60;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
 
+time_t rawtime;
+struct tm *ti;
+
 // Open weather map
 const String zip = "98103";
 const String currentEndpoint = "http://api.openweathermap.org/data/2.5/weather?zip=" + zip + "&units=imperial&APPID=";
@@ -142,8 +145,18 @@ void setupNTP() {
   // Set up NTP client
   Serial.println("Setting up NTP");
   timeClient.begin();
-  delay(200);
-  timeClient.update();
+
+  // Continually update NTP until it is actually set (and we are not in 1969 at the epoch)
+  int year = 0;
+  while (year < 2019) {
+    delay(100);
+    timeClient.update();
+    
+    rawtime = timeClient.getEpochTime();
+    ti = localtime(&rawtime);
+
+    year = ti->tm_year + 1900;
+  }
 }
 
 /************************* Loop *************************/
@@ -282,8 +295,8 @@ void drawBars() {
     }
 
     // If not much is going on, flatline the whole thing (avg silence is about 1.1-1.3), music > 2 usually
-    if (runningAvg < 1.4) {
-      floatVal = 1;
+    if (runningAvg < 1.4 && floatVal >= 1.4) {
+      floatVal *= 0.3;
     }
     
     floatVal = constrain(floatVal, 1, 14);
@@ -299,8 +312,6 @@ void drawBars() {
 #define AM "AM"
 #define PM "PM"
 char* am;
-time_t rawtime;
-struct tm *ti;
 uint8_t day, month, minute, hour;
 
 void drawTime() {
