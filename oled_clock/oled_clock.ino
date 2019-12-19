@@ -15,11 +15,16 @@ extern "C" {
 #define OLED_RESET 0  // GPIO0
 Adafruit_SSD1306 display(OLED_RESET);
 
-const char *ssid     = "mcolash";
-const char *password = "candyraisins";
+const char *ssid     = "Obi-LAN Kenobi";
+const char *password = "UseTheForce";
 
-const long utcOffsetInSeconds = - 60 * 60 * 6;
+const long utcOffsetInSeconds = - 60 * 60 * 8;
 const long updateInterval = 10 * 60 * 1000;
+
+const unsigned char wifiIcon [] PROGMEM = {
+  0x03, 0xc0, 0x1f, 0xf8, 0x78, 0x1e, 0xf0, 0x07, 0xcf, 0xf3, 0x1f, 0xf8, 0x38, 0x1c, 0x13, 0xc8, 
+  0x07, 0xe0, 0x06, 0x60, 0x00, 0x00, 0x03, 0xc0, 0x03, 0xc0, 0x03, 0xc0, 0x00, 0x00
+};
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -62,6 +67,8 @@ void setBrightness(uint8_t brightness) {
 void setup()   {
   Serial.begin(115200);
 
+  setupDisplay();
+
   Serial.println();
   Serial.print("Connecting to ");
   Serial.print(ssid);
@@ -77,7 +84,9 @@ void setup()   {
 
   timeClient.begin();
   timeClient.update();
+}
 
+void setupDisplay() {
   // start display
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
@@ -85,10 +94,12 @@ void setup()   {
   setBrightness(0);
     
   display.clearDisplay();
-  display.display();
 
   display.setTextSize(2);
   display.setTextColor(WHITE);
+
+  display.drawBitmap(26, 20, wifiIcon, 16, 15, WHITE);
+  display.display();
 }
 
 int counter = 10000;
