@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <ESP8266WebServer.h> 
 #include <time.h>
 #include <Wire.h>
 
@@ -19,9 +20,11 @@
 const long utcOffsetInSeconds = -8 * 60 * 60;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
-
 time_t rawtime;
 struct tm *ti;
+
+// web server
+ESP8266WebServer server(80);
 
 // Open weather map
 const String zip = "98103";
@@ -64,16 +67,28 @@ float lastLines[BARS];
 int i, val, sum;
 float avg, floatVal, runningAvg;
 
+// I2C blending variables
 const float positiveMixFactor = 0.2;
 const float negativeMixFactor = 0.07;
+
 char timeDisplay[10];
 int temperature = -999;
+
+// Scrolling Text
+const float scrollSpeed = 0.2;
+float dateOffset = 0;
+int dateDirection = 0;
+float songOffset = 64;
+int songDirection = 0;
+String currentSong;
+bool songEnabled = true;
 
 // roughly 60 updates a second * 60 sec * 60 min (every hour)
 const long updateTime = 60 * 60 * 60;
 long updateCount = updateTime;
 
 int brightness = 100;
+int brightnessOverride = -1;
 
 /************************* Setup *************************/
 
@@ -96,6 +111,7 @@ void setup() {
   setupDisplay();
   setupWifi();
   setupNTP();
+  setupServer();
 
   // Zero out arrays (just in case)
   for (i=0; i < BARS; i++) {
@@ -119,6 +135,7 @@ void setupDisplay() {
   display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
   display.showBuffer();
   display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
+  display.showBuffer();
 }
 
 void setupWifi() {
@@ -160,10 +177,64 @@ void setupNTP() {
   }
 }
 
+void setupServer() {
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/brightness", HTTP_GET, getBrightness);
+  server.on("/brightness", HTTP_POST, setBrightness);
+  server.on("/song", HTTP_GET, getSongEnabled);
+  server.on("/song", HTTP_POST, setSong);
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+}
+
+/********************** Web Server **********************/
+void handleRoot() {
+  server.send(200, "text/plain", "Hello world!");   // Send HTTP status 200 (Ok) and send some text to the browser/client
+}
+
+void getBrightness() {
+  server.send(200, "text/plain", String(brightnessOverride));
+}
+
+String setBrightnessString = "Set brightness to ";
+void setBrightness() {
+  if(server.hasArg("brightness")) {
+    brightnessOverride = server.arg("brightness").toInt();
+    server.send(200, "text/plain", setBrightnessString + brightnessOverride);
+  } else {
+    server.send(400, "text/plain", "400: Invalid Request");
+  }
+}
+
+String songEnabledString = "songEnabled: ";
+void getSongEnabled() {
+  server.send(200, "text/plain", songEnabledString + songEnabled);
+}
+
+void setSong() {
+  if(server.hasArg("enabled")) {
+    songEnabled = server.arg("enabled") == "true";
+    server.send(200, "text/plain", songEnabledString + songEnabled);
+  } else if(server.hasArg("song") && songEnabled) {
+    currentSong = server.arg("song");
+    dateDirection = -1;
+    server.send(200, "text/plain", "Setting new song");
+  } else {
+    server.send(400, "text/plain", "400: Invalid Request");
+  }
+}
+
+void handleNotFound(){
+  server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
+}
+
 /************************* Loop *************************/
 bool first = true;
 
 void loop() {
+  server.handleClient();
+  
   // Updating things over wifi is costly and makes the display freeze for a moment, only update things once in a while
   updateData();
   
@@ -174,16 +245,8 @@ void loop() {
   
   sampleData();
 
-  // DO NOT USE FILL SCREEN - VERY EXPENSIVE (12x worse)!
-  display.clearDisplay();
-  
-  drawBars();
-  drawTime();
-  drawDate();
-  drawWeather();
-  
-  display.showBuffer();
-  
+  draw();
+
   delay(15);
 }
 
@@ -243,7 +306,11 @@ void sampleData() {
       // found these magic numbers based off of my own ambient light
       val = max(10, (int) (0.004 * val * val));
 
-      brightness = 0.95 * brightness + 0.05 * val;
+      if (brightnessOverride > 0) {
+        brightness = brightnessOverride;
+      } else {
+        brightness = 0.95 * brightness + 0.05 * val;
+      }
       
       display.setBrightness(brightness);
 
@@ -265,6 +332,19 @@ void sampleData() {
 }
 
 /************************* Draw *************************/
+
+void draw() {
+  // DO NOT USE FILL SCREEN - VERY EXPENSIVE (12x worse)!
+  display.clearDisplay();
+  
+  drawBars();
+  drawTime();
+  drawDate();
+  drawSong();
+  drawWeather();
+  
+  display.showBuffer();
+}
 
 uint16_t color;
 void drawBars() {
@@ -340,6 +420,16 @@ void drawTime() {
 }
 
 void drawDate() {
+  if (songDirection != 0) return;
+  
+  dateOffset += scrollSpeed * dateDirection;
+  
+  if (dateOffset > 0) dateDirection = 0;
+  if (dateOffset < -20) {
+    dateDirection = 0;
+    songDirection = -1;
+  }
+
   display.setTextColor(getColor(LIME_HUE, 255, 255));
   display.setFont(&TomThumb);
 
@@ -349,8 +439,28 @@ void drawDate() {
   day = ti->tm_mday;
   month = ti->tm_mon + 1;
   
-  display.setCursor(2, 16);
+  display.setCursor(2 + dateOffset, 16);
   display.printf("%d/%d", month, day);
+}
+  
+void drawSong() {
+  if (songDirection == 0) return;
+
+  int songLength = currentSong.length() * 4;
+  
+  songOffset += scrollSpeed * songDirection;
+  if (songOffset < -songLength) {
+    songDirection = 0;
+    songOffset = 64;
+    dateDirection = 1;
+    currentSong = "";
+  }
+  
+  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setFont(&TomThumb);
+  
+  display.setCursor(2 + songOffset, 16);
+  display.print(currentSong);
 }
 
 void drawWeather() {
