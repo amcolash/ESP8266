@@ -115,9 +115,10 @@ void setupDisplay() {
   // Paint to display 500x a second
   display_ticker.attach(0.002, display_updater);
 
-  // Draw wifi connecting icon
+  // Draw wifi connecting icon on both buffers
   display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
   display.showBuffer();
+  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
 }
 
 void setupWifi() {
