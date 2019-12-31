@@ -1,4 +1,5 @@
 #include <ESP8266WiFi.h>
+#include <EEPROM.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <ESP8266WebServer.h> 
@@ -47,7 +48,6 @@ HTTPClient http;
 PxMATRIX display(64,32,P_LAT, P_OE,P_A,P_B,P_C,P_D);
 
 const uint16_t BLACK = display.color565(0, 0, 0);
-const int LIME_HUE = 85;
 
 // 'wifi_small', 16x15px
 const unsigned char wifiIcon [] PROGMEM = {
@@ -66,6 +66,16 @@ int8_t lines[BARS];
 float lastLines[BARS];
 int i, val, sum;
 float avg, floatVal, runningAvg;
+
+struct {
+  uint8_t valid = 0;
+  uint8_t textHue = 0;
+  uint8_t textSaturation = 0;
+  uint8_t barHues[BARS];
+  uint8_t barSaturation[BARS];
+} colorData;
+
+# define EEPROM_ADDRESS 0
 
 // I2C blending variables
 const float positiveMixFactor = 0.2;
@@ -108,6 +118,7 @@ void setup() {
   // Set up I2C for ads with custom pins
   Wire.begin(D3, RX); // SDA,SCL
 
+  setupColors();
   setupDisplay();
   setupWifi();
   setupNTP();
@@ -118,6 +129,18 @@ void setup() {
     lines[i] = -1;
     lastLines[i] = -1;
   };
+}
+
+void setupColors() {
+  // get existing data from EEPROM
+  EEPROM.begin(sizeof colorData);
+  EEPROM.get(EEPROM_ADDRESS, colorData);
+
+  // reset data if 1st byte is incorrect
+  if (colorData.valid != 42) resetColors();
+
+  // only writes if the bytes are different
+  writeEeprom();
 }
 
 void setupDisplay() {
@@ -132,9 +155,9 @@ void setupDisplay() {
   display_ticker.attach(0.002, display_updater);
 
   // Draw wifi connecting icon on both buffers
-  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
+  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(colorData.textHue, colorData.textSaturation, 255));
   display.showBuffer();
-  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(LIME_HUE, 255, 255));
+  display.drawBitmap(24, 9, wifiIcon, 16, 15, getColor(colorData.textHue, colorData.textSaturation, 255));
   display.showBuffer();
 }
 
@@ -183,6 +206,8 @@ void setupServer() {
   server.on("/brightness", HTTP_POST, setBrightness);
   server.on("/song", HTTP_GET, getSongEnabled);
   server.on("/song", HTTP_POST, setSong);
+  server.on("/color", HTTP_GET, getColors);
+  server.on("/color", HTTP_POST, setColors);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -224,6 +249,56 @@ void setSong() {
     server.send(400, "text/plain", "400: Invalid Request");
   }
 }
+
+void getColors() {
+  const int colorCapacity = JSON_OBJECT_SIZE(4) + JSON_ARRAY_SIZE(2 * 16);
+  StaticJsonDocument<colorCapacity> colorDoc;
+  char output[256];
+
+  colorDoc["textHue"] = (int) colorData.textHue;
+  colorDoc["textSaturation"] = (int) colorData.textSaturation;
+
+  JsonArray barHues = colorDoc.createNestedArray("barHues");
+  JsonArray barSaturation = colorDoc.createNestedArray("barSaturation");
+  for (i = 0; i < 16; i++) {
+    barHues.add(colorData.barHues[i]);
+    barSaturation.add(colorData.barSaturation[i]);
+  }
+
+  serializeJson(colorDoc, output);
+
+  server.send(200, "text/json", output);
+}
+
+void setColors() {
+  if (server.hasArg("data")) {
+    const int colorCapacity = JSON_OBJECT_SIZE(4) + 2 * JSON_ARRAY_SIZE(16) + 180;
+    StaticJsonDocument<colorCapacity> colorDoc;
+    deserializeJson(colorDoc, server.arg("data"));
+
+    colorData.textHue = colorDoc["textHue"];
+    colorData.textSaturation = colorDoc["textSaturation"];
+
+    JsonArray barHues = colorDoc["barHues"].as<JsonArray>();
+    JsonArray barSaturation = colorDoc["barSaturation"].as<JsonArray>();
+
+    for (i = 0; i < 16; i++) {
+      colorData.barHues[i] = barHues[i];
+      colorData.barSaturation[i] = barSaturation[i];
+    }
+    writeEeprom();
+
+    server.send(200, "text/plain", "Set new colors");
+  } else if (server.hasArg("reset")) {
+    resetColors();
+    writeEeprom();
+
+    server.send(200, "text/plain", "Reset colors");
+  } else {
+    server.send(400, "text/plain", "400: Invalid Request");
+  }
+}
+
 
 void handleNotFound(){
   server.send(404, "text/plain", "404: Not found"); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
@@ -270,14 +345,10 @@ void updateCurrentWeather() {
       const size_t bufferSize = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(1) + 
           2*JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + 
           JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(12) + 390;
-      DynamicJsonBuffer jsonBuffer(bufferSize);
-      JsonObject& root = jsonBuffer.parseObject(payload);
-
-      if (!root.success()) {
-        temperature = -999;
-      } else {
-        temperature = (int) root["main"]["temp"];
-      }
+      StaticJsonDocument<bufferSize> doc;
+      deserializeJson(doc, payload);
+      
+      temperature = (int) doc["main"]["temp"];
   } else {
     temperature = -999;
   }
@@ -357,7 +428,7 @@ void drawBars() {
   runningAvg = runningAvg * 0.95 + avg * 0.05;
 
   for (i=0; i < BARS; i++) {
-    color = getColor((int) ((float) i / BARS * 255) % 255, 255, 255);
+    color = getColor(colorData.barHues[i], colorData.barSaturation[i], 255);
 
     // use a float to keep track of things so that the bars mix well between frames
     floatVal = lines[i];
@@ -396,7 +467,7 @@ char* am;
 uint8_t day, month, minute, hour;
 
 void drawTime() {
-  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont();
 
   hour = timeClient.getHours();
@@ -430,7 +501,7 @@ void drawDate() {
     songDirection = -1;
   }
 
-  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont(&TomThumb);
 
   rawtime = timeClient.getEpochTime();
@@ -456,7 +527,7 @@ void drawSong() {
     currentSong = "";
   }
   
-  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont(&TomThumb);
   
   display.setCursor(2 + songOffset, 16);
@@ -464,7 +535,7 @@ void drawSong() {
 }
 
 void drawWeather() {
-  display.setTextColor(getColor(LIME_HUE, 255, 255));
+  display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont(&TomThumb);
 
   if (temperature > -999) {
@@ -477,6 +548,25 @@ void drawWeather() {
 }
 
 /************************* Util *************************/
+
+void resetColors() {
+  // Lime
+  colorData.textHue = 85;
+  colorData.textSaturation = 255;
+  
+  // Rainbow
+  for (i=0; i < BARS; i++) {
+    colorData.barHues[i] = ((int) ((float) i / BARS * 255) % 255);
+    colorData.barSaturation[i] = 255;
+  }
+
+  colorData.valid = 42;
+}
+
+void writeEeprom() {
+  EEPROM.put(EEPROM_ADDRESS, colorData);
+  EEPROM.commit();
+}
 
 uint16_t getColor(int hue, int saturation, int value) {
     value = (int) (0.5 * value + 0.5 * value * brightness / 255.);
