@@ -288,12 +288,14 @@ void setColors() {
     }
     writeEeprom();
 
-    server.send(200, "text/plain", "Set new colors");
+    // send the set colors as the response
+    getColors();
   } else if (server.hasArg("reset")) {
     resetColors();
     writeEeprom();
 
-    server.send(200, "text/plain", "Reset colors");
+    // send the reset colors as the response
+    getColors();
   } else {
     server.send(400, "text/plain", "400: Invalid Request");
   }
