@@ -92,6 +92,7 @@ float songOffset = 64;
 int songDirection = 0;
 String currentSong;
 bool songEnabled = true;
+int songColorShift = -1;
 
 // roughly 60 updates a second * 60 sec * 60 min (every hour)
 const long updateTime = 60 * 60 * 60;
@@ -244,6 +245,11 @@ void setSong() {
   } else if(server.hasArg("song") && songEnabled) {
     currentSong = server.arg("song");
     dateDirection = -1;
+    if (server.hasArg("shift")) songColorShift = server.arg("shift").toInt();
+    else songColorShift = -1;
+
+    Serial.println(currentSong);
+
     server.send(200, "text/plain", "Setting new song");
   } else {
     server.send(400, "text/plain", "400: Invalid Request");
@@ -295,6 +301,9 @@ void setColors() {
     writeEeprom();
 
     // send the reset colors as the response
+    getColors();
+  } else if (server.hasArg("shift")) {
+    shiftColors(server.arg("shift").toInt());
     getColors();
   } else {
     server.send(400, "text/plain", "400: Invalid Request");
@@ -501,6 +510,7 @@ void drawDate() {
   if (dateOffset < -20) {
     dateDirection = 0;
     songDirection = -1;
+    shiftColors(songColorShift);
   }
 
   display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
@@ -563,6 +573,25 @@ void resetColors() {
   }
 
   colorData.valid = 42;
+}
+
+uint8_t tmp1[BARS];
+uint8_t tmp2[BARS];
+void shiftColors(int offset) {
+  // Flip offset (to make sense, + => right, - => left), then make it positive and within range
+  offset *= -1;
+  while (offset < 0) offset += BARS;
+  offset = offset % BARS;
+  
+  for (i = 0; i < BARS; i++) {
+    tmp1[i] = colorData.barHues[(offset + i) % BARS];
+    tmp2[i] = colorData.barSaturation[(offset + i) % BARS];
+  }
+
+  for (i = 0; i < BARS; i++) {
+    colorData.barHues[i] = tmp1[i];
+    colorData.barSaturation[i] = tmp2[i];
+  }
 }
 
 void writeEeprom() {
