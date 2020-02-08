@@ -55,6 +55,11 @@ const unsigned char wifiIcon [] PROGMEM = {
   0x07, 0xe0, 0x06, 0x60, 0x00, 0x00, 0x03, 0xc0, 0x03, 0xc0, 0x03, 0xc0, 0x00, 0x00
 };
 
+// Music note icon
+const unsigned char musicIcon [] PROGMEM = {
+  0x3e, 0x22, 0x22, 0xee, 0xee
+};
+
 byte RedLight;
 byte GreenLight;
 byte BlueLight;
@@ -457,9 +462,9 @@ void drawBars() {
       floatVal = floatVal * negativeMixFactor + lastLines[i] * (1 - negativeMixFactor);
     }
 
-    // If not much is going on, flatline the whole thing (avg silence is about 1.1-1.3), music > 2 usually
+    // If not much is going on, scale down the whole thing (avg silence is about 1.1-1.3), music > 2 usually
     if (runningAvg < 1.4 && floatVal >= 1.4) {
-      floatVal *= 0.3;
+      floatVal *= 0.5;
     }
     
     floatVal = constrain(floatVal, 1, 14);
@@ -522,7 +527,7 @@ void drawDate() {
   day = ti->tm_mday;
   month = ti->tm_mon + 1;
   
-  display.setCursor(2 + dateOffset, 16);
+  display.setCursor(2 + floor(dateOffset), 16);
   display.printf("%d/%d", month, day);
 }
   
@@ -541,8 +546,9 @@ void drawSong() {
   
   display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont(&TomThumb);
-  
-  display.setCursor(2 + songOffset, 16);
+
+  display.drawBitmap(2 + floor(songOffset), 11, musicIcon, 7, 5, getColor(colorData.textHue, colorData.textSaturation, 255));
+  display.setCursor(12 + floor(songOffset), 16);
   display.print(currentSong);
 }
 
