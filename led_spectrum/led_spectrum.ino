@@ -4,6 +4,7 @@
 #include <NTPClient.h>
 #include <ESP8266WebServer.h> 
 #include <time.h>
+#include <Timezone.h>
 #include <Wire.h>
 
 #include <ESP8266HTTPClient.h>
@@ -17,12 +18,16 @@
 /************************* Constants / Globals *************************/
 #include "key.h"
 
-// NTP Client, -8 is w/o DST, -7 is with DST
-const long utcOffsetInSeconds = -8 * 60 * 60;
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, utcOffsetInSeconds);
+NTPClient timeClient(ntpUDP);
 time_t rawtime;
 struct tm *ti;
+
+// Timezone data from https://github.com/JChristensen/Timezone/blob/master/examples/WorldClock/WorldClock.ino
+// US Pacific Time Zone (Las Vegas, Los Angeles, Seattle)
+TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};
+TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
+Timezone timezone(usPDT, usPST);
 
 // web server
 ESP8266WebServer server(80);
@@ -477,33 +482,25 @@ void drawBars() {
   }
 }
 
-#define AM "AM"
-#define PM "PM"
-char* am;
-uint8_t day, month, minute, hour;
+int hourNow;
 
 void drawTime() {
   display.setTextColor(getColor(colorData.textHue, colorData.textSaturation, 255));
   display.setFont();
 
-  hour = timeClient.getHours();
-  minute = timeClient.getMinutes();
-  
-  am = AM;
-  if (hour >= 12) {
-    am = PM;
-    if (hour > 12) hour -= 12;
-  }
-  if (hour == 0) hour = 12;
+  rawtime = timeClient.getEpochTime();
+  rawtime = timezone.toLocal(rawtime);
 
-  display.setCursor(2 - (hour > 9 ? 1 : 0), 2);
-  display.print(hour);
+  hourNow = hourFormat12(rawtime);
+
+  display.setCursor(2 - (hourNow > 9 ? 1 : 0), 2);
+  display.print(hourNow);
   display.setCursor(display.getCursorX() - 2, display.getCursorY());
   display.print(":");
   display.setCursor(display.getCursorX() - 2, display.getCursorY());
-  display.printf("%02d", minute);
+  display.printf("%02d", minute(rawtime));
   display.setCursor(display.getCursorX() + 1, display.getCursorY());
-  display.print(am);
+  display.print(isAM(rawtime) ? "AM" : "PM");
 }
 
 void drawDate() {
@@ -522,13 +519,10 @@ void drawDate() {
   display.setFont(&TomThumb);
 
   rawtime = timeClient.getEpochTime();
-  ti = localtime(&rawtime);
-
-  day = ti->tm_mday;
-  month = ti->tm_mon + 1;
+  rawtime = timezone.toLocal(rawtime);
   
   display.setCursor(2 + floor(dateOffset), 16);
-  display.printf("%d/%d", month, day);
+  display.printf("%d/%d", month(rawtime), day(rawtime));
 }
   
 void drawSong() {
