@@ -131,7 +131,7 @@ int pingThreshold = 12;
 bool device_present() {
   pingCounter++;
   
-  // Since loop delay ~400ms, counter = 300 = 1.5 minutes, counter = 12 = 5 seconds
+  // Since loop delay ~400ms, counter = 300 => 1.5 minutes, counter = 12 => 5 seconds
   // This large delay is to try and help my phone's battery out 
   if (pingCounter > pingThreshold) {
     Serial.println("Pinging phone");
