@@ -12,7 +12,8 @@ const char* password = "UseTheForce";
 uint64_t OFF_CODE = 0x4CB3748B;
 uint64_t ON_CODE = 0x4CB340BF;
 
-uint64_t STEREO_POWER = 0xA81;
+uint64_t STEREO_POWER_ON = 0x741;
+uint64_t STEREO_POWER_OFF = 0xF41;
 uint64_t STEREO_VOLUME_UP = 0x481;
 uint64_t STEREO_VOLUME_DOWN = 0xC81;
 
@@ -114,8 +115,9 @@ void setupServer() {
 
   server.on("/projector_on", []() { projector(true); });
   server.on("/projector_off", []() { projector(false); });
-  
-  server.on("/stereo", []() { stereoPower(); });
+
+  server.on("/stereo_on", []() { stereoPower(true); });
+  server.on("/stereo_off", []() { stereoPower(false); });
   server.on("/stereo_up", []() { stereoVolume(1); });
   server.on("/stereo_down", []() { stereoVolume(-1); });
   server.on("/stereo_volume", []() { stereoVolume(); });
@@ -192,9 +194,11 @@ void projector(bool on) {
   sendResponse(response);
 }
 
-void stereoPower() {
-    irsend.sendSony(STEREO_POWER, 12, 5);
-    sendResponse("Send stereo power command");
+void stereoPower(bool on) {
+    irsend.sendSony(on ? STEREO_POWER_ON : STEREO_POWER_OFF, 12, 5);
+    String response = "Sent stereo power command ";
+    response += (on ? "on" : "off");
+    sendResponse(response);
 }
 
 void stereoVolume() {
@@ -283,4 +287,3 @@ void sendResponse(String response) {
 
   Serial.println(response);
 }
-
