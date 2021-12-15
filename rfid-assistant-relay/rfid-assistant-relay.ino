@@ -67,6 +67,7 @@ int DST = 0;
 int sunrise = 0;
 int sunset = 0;
 
+bool devicePresent = false;
 bool isOn = false;
 
 void setup() {
@@ -120,7 +121,15 @@ void loop() {
   timeClient.update();
 
   // Either card or wifi device will turn on the lights, need both to disappear for them to turn off
-  set_enabled(card_present() || device_present());
+  bool card = card_present();
+  bool device = device_present();
+  
+//  Serial.print("Card: ");
+//  Serial.print(card);
+//  Serial.print(", Device: ");
+//  Serial.println(device);
+  
+  set_enabled(card || device);
 
   delay(200);
 }
@@ -134,17 +143,19 @@ bool device_present() {
   // Since loop delay ~400ms, counter = 300 => 1.5 minutes, counter = 12 => 5 seconds
   // This large delay is to try and help my phone's battery out 
   if (pingCounter > pingThreshold) {
-    Serial.println("Pinging phone");
+    Serial.print("Pinging phone... ");
     
-    bool alive = Ping.ping(ip, 1);
+    devicePresent = Ping.ping(ip, 1);
+
+    Serial.println(devicePresent ? "present" : "not present");
 
     pingCounter = 0;
-    pingThreshold = alive ? 300 : 12;
+    pingThreshold = devicePresent ? 300 : 12;
     
-    return alive;
+    return devicePresent;
   }
 
-  return isOn;
+  return devicePresent;
 }
 
 /*
