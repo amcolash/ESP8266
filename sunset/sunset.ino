@@ -2,34 +2,18 @@
 #include <ezTime.h>
 
 #include "config.h"
+#include "sundata.h"
+#include "util.h"
 
 // Constants that need to be configured
 #define LED D1
 #define TIMEZONE "America/Los_Angeles"
 
-// Debug vars
-#define DEBUG
-
-#ifdef DEBUG
-  #define MAX_BRIGHTNESS 150
-#else
-  #define MAX_BRIGHTNESS 1023
-#endif
-
-// Internal State
-int brightness = 0;
-int targetBrightness = 0;
-
-int fadeDuration = 30 * 60 * 1000;
-int fadeSegment = fadeDuration / MAX_BRIGHTNESS;
-long timer;
-
-Timezone tz;
-
 // Setup functions
 
 void setup() {
   Serial.begin(115200);
+  Serial.println();
 
   setupPins();
   setupWifi();
@@ -42,8 +26,6 @@ void setup() {
 void setupPins() {
   pinMode(LED, OUTPUT);
   analogWriteRange(1024);
-
-  targetBrightness = MAX_BRIGHTNESS;
 }
 
 void setupWifi() {
@@ -94,37 +76,4 @@ void loop() {
 
     timer = millis();
   }
-}
-
-// Util functions
-
-// Runs every day at midnight, also schedules a new event at midnight
-void scheduleEvents() {
-
-
-//  time_t next = nextDay();
-  time_t next = nextMin();
-  setEvent(scheduleEvents, next);
-
-  Serial.println("Event added: SecheduleEvents [" + dateTime(next, RSS) + "]");
-}
-
-time_t nextMin() {
-  // Get current time  
-  tmElements_t tm;
-  breakTime(tz.now(), tm);
-
-  // Add on a day to this (the library nicely does proper rolling over math, except maybe for new year?)
-  time_t next = makeTime(tm.Hour, tm.Minute, tm.Second + 5, tm.Day, tm.Month, tm.Year);
-  return next;
-}
-
-time_t nextDay() {
-  // Get current time  
-  tmElements_t tm;
-  breakTime(tz.now(), tm);
-
-  // Add on a day to this (the library nicely does proper rolling over math, except maybe for new year?)
-  time_t next = makeTime(0, 0, 0, tm.Day + 1, tm.Month, tm.Year);
-  return next;
 }
