@@ -10,6 +10,7 @@
 
 // Internal State
 
+bool on = true;
 int brightness = 0;
 int targetBrightness = 0;
 Timezone tz;

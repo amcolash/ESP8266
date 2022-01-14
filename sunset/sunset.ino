@@ -1,3 +1,4 @@
+#include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h> 
 #include <ezTime.h>
 
@@ -9,6 +10,9 @@
 #define LED D1
 #define TIMEZONE "America/Los_Angeles"
 
+ESP8266WebServer server(80);
+
+
 // Setup functions
 
 void setup() {
@@ -18,6 +22,7 @@ void setup() {
   setupPins();
   setupWifi();
   setupNtp();
+  setupServer();
 
   Serial.println("---------------------");
   scheduleEvents();
@@ -60,20 +65,73 @@ void setupNtp() {
   Serial.println("Default time: " + dateTime());
 }
 
+void setupServer() {
+  server.on("/off", turnOff);
+  server.on("/on", turnOn);
+  server.on("/brightness", setBrightness);
+  
+  server.begin();
+}
+
+
 // Loop functions
 
 void loop() {
   // Check ezTime events (including ntp sync)
   events();
-  
+
+  // Handle server as needed
+  server.handleClient();
+
   if (millis() - timer > fadeSegment) {
     targetBrightness = constrain(targetBrightness, 0, MAX_BRIGHTNESS);
     
     if (brightness < targetBrightness) brightness++;
     else if (brightness > targetBrightness) brightness--;
-    
-    analogWrite(LED, brightness);
 
     timer = millis();
   }
+
+  analogWrite(LED, on ? brightness : 0);
+}
+
+
+// Server functions
+
+void turnOn() {
+  on = true;
+  success();
+}
+
+void turnOff() {
+  on = false;
+  success();
+}
+
+void setBrightness() {
+  int16_t value = getArg("value");
+  
+  if (value != -1) {
+    brightness = value;
+    targetBrightness = value;
+    
+    success();
+  } else {
+    server.send(400, "text/plain", "Invalid parameters passed");
+  }
+}
+
+int16_t getArg(String arg) {
+  for (int i = 0; i < server.args(); i++) {
+    int value = server.arg(i).toInt();
+    if (server.argName(i) == arg && value >= 0 && value <= 1023) {
+      return value;
+    }
+  }
+
+  return -1;
+}
+
+void success() {
+  server.send(200, "text/plain", "Ok");
 }
