@@ -107,7 +107,7 @@ void loop() {
 
   display.clearDisplay();
 
-  String time = String(String(hourNum) + ":" + String(minuteNum < 10 ? "0" + String(minuteNum) : minuteNum));
+  String time = String(String(hourNum) + ":" + String(minuteNum < 10 ? "0" + String(minuteNum) : String(minuteNum)));
   drawCentredString(time, display.width() / 2, display.height() / 2 + vOffset);
 
   String date = String(String(monthNum) + "/" + String(dayNum));
