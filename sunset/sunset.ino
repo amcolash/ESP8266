@@ -2,6 +2,8 @@
 #include <ESP8266WiFi.h> 
 #include <ezTime.h>
 
+#include "LittleFS.h"
+
 #include "config.h"
 #include "sundata.h"
 #include "util.h"
@@ -17,15 +19,35 @@ ESP8266WebServer server(80);
 
 void setup() {
   Serial.begin(115200);
+  delay(100);
   Serial.println();
+
+  setupFS();
+  
+  log("\n---------------------\n");
 
   setupPins();
   setupWifi();
   setupNtp();
   setupServer();
 
-  Serial.println("---------------------");
   scheduleEvents();
+}
+
+void setupFS() {
+  if (!LittleFS.begin()) {
+    Serial.println("An Error has occurred while mounting Little File System - reformatting");
+    LittleFS.format();
+    return;
+  }
+
+  // Rotate log file at 50kb
+  File f = LittleFS.open(logPath, "r");
+  if (f && f.size() > 50 * 1000) {
+    f.close();
+    LittleFS.remove(logPath);
+    log("Rotated Log File");
+  }
 }
 
 void setupPins() {
@@ -34,7 +56,7 @@ void setupPins() {
 }
 
 void setupWifi() {
-  Serial.println("Connecting to: " + String(ssid));
+  log("Connecting to: " + String(ssid));
 
   WiFi.mode(WIFI_STA); //We don't want the ESP to act as an AP
   WiFi.begin(ssid, password); // Connect to the configured AP
@@ -45,30 +67,32 @@ void setupWifi() {
     Serial.print(".");
   }
 
+  Serial.println();
+
   // We have connected to wifi successfully
-  Serial.println("WiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  log("WiFi connected");
+  log("IP address: " + WiFi.localIP().toString());
 }
 
 void setupNtp() {
-  Serial.println("Syncing clock with ntp");
+  log("Syncing clock with ntp");
 
   // sync ntp
   waitForSync();
-  Serial.println("UTC: " + UTC.dateTime());
+  log("UTC: " + UTC.dateTime());
 
   // set up default timezone
   tz.setLocation(TIMEZONE);
   tz.setDefault();
   
-  Serial.println("Default time: " + dateTime());
+  log("Default time: " + dateTime());
 }
 
 void setupServer() {
   server.on("/off", turnOff);
   server.on("/on", turnOn);
-  server.on("/brightness", setBrightness);
+  server.on("/brightness", handleBrightness);
+  server.on("/log", getLog);
   
   server.begin();
 }
@@ -83,7 +107,7 @@ void loop() {
   // Handle server as needed
   server.handleClient();
 
-  if (millis() - timer > fadeSegment) {
+  if (millis() - timer > (fastFade ? 5 : fadeSegment)) {
     targetBrightness = constrain(targetBrightness, 0, MAX_BRIGHTNESS);
     
     if (brightness < targetBrightness) brightness++;
@@ -91,6 +115,8 @@ void loop() {
 
     timer = millis();
   }
+
+  if (brightness == targetBrightness) fastFade = false;
 
   analogWrite(LED, on ? brightness : 0);
 }
@@ -100,25 +126,43 @@ void loop() {
 
 void turnOn() {
   on = true;
+  log("Turning on");
   success();
 }
 
 void turnOff() {
   on = false;
+  log("Turning off");
   success();
 }
 
-void setBrightness() {
+
+void handleBrightness() {
   int16_t value = getArg("value");
   
   if (value != -1) {
-    brightness = value;
+    on = true;
+    fastFade = true;
+    
     targetBrightness = value;
+
+    log("Setting brightness to: " + String(value));
     
     success();
   } else {
-    server.send(400, "text/plain", "Invalid parameters passed");
+    server.send(200, "application/json", "{ \"brightness\": " + String(brightness) + ",\"targetBrightness\": " + String(targetBrightness) + " }");
   }
+}
+
+bool getLog() {
+  File f = LittleFS.open(logPath, "r");
+
+  if (f) {
+    server.streamFile(f, "text/plain");
+    f.close();
+  }
+
+  return true;
 }
 
 int16_t getArg(String arg) {
