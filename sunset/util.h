@@ -27,6 +27,13 @@ long timer;
 
 //////////////////////////////////////////////////////////////////////
 
+void toggle() {
+  fastFade = true;
+
+  if (targetBrightness > 0) targetBrightness = 0;
+  else targetBrightness = MAX_BRIGHTNESS;
+}
+
 // From: https://gist.github.com/jrleeman/3b7c10712112e49d8607
 int calculateDayOfYear(int day, int month, int year) {
   // Given a day, month, and year (4 digit), returns 
@@ -84,6 +91,11 @@ void log(String s) {
    f.close();
 
    Serial.println(s);
+}
+
+void rotateLog() {
+  LittleFS.remove(logPath);
+  log("Rotated Log File");
 }
 
 void fadeOn() {

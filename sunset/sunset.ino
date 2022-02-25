@@ -2,6 +2,7 @@
 #include <ESP8266WiFi.h> 
 #include <ezTime.h>
 
+#include "ClickButton.h"
 #include "LittleFS.h"
 
 #include "config.h"
@@ -10,10 +11,11 @@
 
 // Constants that need to be configured
 #define LED D1
+#define BUTTON D2
 #define TIMEZONE "America/Los_Angeles"
 
 ESP8266WebServer server(80);
-
+ClickButton button(BUTTON, LOW, CLICKBTN_PULLUP);
 
 // Setup functions
 
@@ -35,6 +37,7 @@ void setup() {
 }
 
 void setupFS() {
+  log("Mounting filesystem");
   if (!LittleFS.begin()) {
     Serial.println("An Error has occurred while mounting Little File System - reformatting");
     LittleFS.format();
@@ -43,14 +46,13 @@ void setupFS() {
 
   // Rotate log file at 50kb
   File f = LittleFS.open(logPath, "r");
-  if (f && f.size() > 50 * 1000) {
-    f.close();
-    LittleFS.remove(logPath);
-    log("Rotated Log File");
-  }
+  if (f && f.size() > 50 * 1000) rotateLog();
+  
+  f.close();
 }
 
 void setupPins() {
+  log("Setting up pins");
   pinMode(LED, OUTPUT);
   analogWriteRange(1024);
 }
@@ -93,6 +95,7 @@ void setupServer() {
   server.on("/on", turnOn);
   server.on("/brightness", handleBrightness);
   server.on("/log", getLog);
+  server.on("/toggle", toggleHandler);
   
   server.begin();
 }
@@ -107,7 +110,10 @@ void loop() {
   // Handle server as needed
   server.handleClient();
 
-  if (millis() - timer > (fastFade ? 5 : fadeSegment)) {
+  // Check button for updates
+  updateButtons(); 
+
+  if (millis() - timer > (fastFade ? 2 : fadeSegment)) {
     targetBrightness = constrain(targetBrightness, 0, MAX_BRIGHTNESS);
     
     if (brightness < targetBrightness) brightness++;
@@ -117,8 +123,12 @@ void loop() {
   }
 
   if (brightness == targetBrightness) fastFade = false;
-
   analogWrite(LED, on ? brightness : 0);
+}
+
+void updateButtons() {
+  button.Update();
+  if (button.clicks == 1) toggle();
 }
 
 
@@ -136,6 +146,11 @@ void turnOff() {
   success();
 }
 
+void toggleHandler() {
+  toggle();
+  log("Toggling state, new value: " + String(targetBrightness));
+  success();
+}
 
 void handleBrightness() {
   int16_t value = getArg("value");
@@ -155,6 +170,8 @@ void handleBrightness() {
 }
 
 bool getLog() {
+  if (getArg("reset") != -1) rotateLog(); 
+  
   File f = LittleFS.open(logPath, "r");
 
   if (f) {
