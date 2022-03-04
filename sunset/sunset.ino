@@ -47,7 +47,11 @@ void setupFS() {
   // Rotate log file at 50kb
   File f = LittleFS.open(logPath, "r");
   if (f && f.size() > 50 * 1000) rotateLog();
-  
+  f.close();
+
+  // Load in persisted data
+  f = LittleFS.open(dataPath, "r");
+  if (f) f.read((byte *)&data, sizeof(data));
   f.close();
 }
 
@@ -96,6 +100,8 @@ void setupServer() {
   server.on("/brightness", handleBrightness);
   server.on("/log", getLog);
   server.on("/toggle", toggleHandler);
+  server.on("/alarm", setAlarm);
+  server.on("/restart", restart);
   
   server.begin();
 }
@@ -136,20 +142,20 @@ void updateButtons() {
 
 void turnOn() {
   on = true;
-  log("Turning on");
   success();
+  log("Turning on");
 }
 
 void turnOff() {
   on = false;
-  log("Turning off");
   success();
+  log("Turning off");
 }
 
 void toggleHandler() {
   toggle();
-  log("Toggling state, new value: " + String(targetBrightness));
   success();
+  log("Toggling state, new value: " + String(targetBrightness));
 }
 
 void handleBrightness() {
@@ -158,12 +164,11 @@ void handleBrightness() {
   if (value != -1) {
     on = true;
     fastFade = true;
-    
     targetBrightness = value;
 
-    log("Setting brightness to: " + String(value));
-    
     success();
+
+    log("Setting brightness to: " + String(value));
   } else {
     server.send(200, "application/json", "{ \"brightness\": " + String(brightness) + ",\"targetBrightness\": " + String(targetBrightness) + " }");
   }
@@ -180,6 +185,34 @@ bool getLog() {
   }
 
   return true;
+}
+
+void setAlarm() {
+  int16_t hour = getArg("hour");
+  int16_t minute = getArg("minute");
+
+  if (hour != -1 && minute != -1) {
+    data.alarmHour = hour;
+    data.alarmMinute = minute;
+
+    server.send(200, "application/json", "{ \"alarmHour\": " + String(data.alarmHour) + ",\"alarmMinute\": " + String(data.alarmMinute) + " }");
+
+    File f = LittleFS.open(dataPath, "w");
+    f.write((byte *)&data, sizeof(data));
+    f.close();
+
+    log("Set alarm to " + String(data.alarmHour) + ":" + String(data.alarmMinute));
+
+    // Reschedule events because alarm might change sunrise time
+    scheduleEvents();
+  } else {
+    server.send(200, "application/json", "{ \"alarmHour\": " + String(data.alarmHour) + ",\"alarmMinute\": " + String(data.alarmMinute) + " }");
+  }
+}
+
+void restart() {
+  success();
+  ESP.restart();
 }
 
 int16_t getArg(String arg) {

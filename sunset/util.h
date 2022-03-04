@@ -8,6 +8,17 @@
   #define MAX_BRIGHTNESS 1023
 #endif
 
+#define ALARM_HOUR_ADDRESS 0
+#define ALARM_MINUTE_ADDRESS 4
+
+// Persisted data
+typedef struct {
+  uint8_t alarmHour;
+  uint8_t alarmMinute;
+} Persisted;
+
+Persisted data = { 255, 255 };
+
 // Internal State
 
 bool on = true;
@@ -16,6 +27,7 @@ int brightness = 0;
 int targetBrightness = 0;
 Timezone tz;
 
+String dataPath = "data.txt";
 String logPath = "log.txt";
 
 int fadeDuration = 30 * 60 * 1000;
@@ -120,6 +132,13 @@ void schedule(String name, void (*function)(), time_t time) {
 
 // Runs every day at midnight, also schedules a new event at midnight
 void scheduleEvents() {
+  log("Scheduling events, deleting old events");
+
+  // Delete old events
+  deleteEvent(fadeOn);
+  deleteEvent(fadeOff);
+  deleteEvent(scheduleEvents);
+  
   time_t now = tz.now();
   tmElements_t tm;
   breakTime(now, tm);
@@ -135,6 +154,23 @@ void scheduleEvents() {
     int sunriseHour = sunriseTotal / 60;
     int sunriseMinute = ((sunriseTotal / 60.) - sunriseHour) * 60;
 
+    if (data.alarmHour != 255 && data.alarmMinute != 255) {
+      time_t sunrise = makeTime(sunriseHour, sunriseMinute, 0, tm.Day, tm.Month, tm.Year);
+      time_t alarm = makeTime(data.alarmHour, data.alarmMinute, 0, tm.Day, tm.Month, tm.Year);
+      
+      log("Comparing sunrise \t[" + dateTime(sunrise, RSS) + "]");
+      log("Comparing alarm \t[" + dateTime(alarm, RSS) + "]");
+
+      int alarmTotal = data.alarmHour * 60 + data.alarmMinute;
+      if (alarmTotal > sunriseTotal) {
+        sunriseHour = data.alarmHour;
+        sunriseMinute = data.alarmMinute;
+
+        alarm = makeTime(sunriseHour, sunriseMinute, 0, tm.Day, tm.Month, tm.Year);
+        log("New Sunrise Time \t[" + dateTime(alarm, RSS) + "]"); 
+      }
+    }
+
     int sunsetHour = sunsetTotal / 60;
     int sunsetMinute = ((sunsetTotal / 60.) - sunsetHour) * 60;
 
@@ -148,7 +184,6 @@ void scheduleEvents() {
 
     // Handle the case where we are already in the middle of fade-in
     int tempBrightness = 0;
-    int tempTargetBrightness = 0;
     if (now > sunriseOn && now < sunriseDelay) {
       tempBrightness = (now - sunriseOn) / (now - sunriseDelay) * MAX_BRIGHTNESS;
     } else if (now > sunsetOn && now < sunsetDelay) {
@@ -158,17 +193,17 @@ void scheduleEvents() {
     }
 
     if (tempBrightness != 0) {
-      Serial.println("Overriding brightness due to schedule: " + String(tempBrightness));
+      log("Overriding brightness due to schedule: " + String(tempBrightness));
       brightness = tempBrightness;
       targetBrightness = MAX_BRIGHTNESS;
     }
 
     // Fade-out, fade down in a normal time
-    if ((now > sunriseOff && now < sunriseOff + fadeDuration) || (now > sunsetOff && now < sunsetOff + fadeDuration)) {
+    if ((now > sunriseOff && now < sunriseOff + fadeDuration / 1000) || (now > sunsetOff && now < sunsetOff + fadeDuration / 1000)) {
       brightness = MAX_BRIGHTNESS;
       targetBrightness = 0;
 
-      Serial.println("Overriding brightness due to schedule: " + String(brightness) + ", and now fading off");
+      log("Overriding brightness due to schedule: " + String(brightness) + ", and now fading off");
     }
 
     // Schedule actual fading events    
@@ -176,7 +211,7 @@ void scheduleEvents() {
     schedule("Sunrise Off", fadeOff, sunriseOff);
 
     schedule("Sunset On", fadeOn, sunsetOn);
-    schedule("Sunrset Off", fadeOff, sunsetOff);
+    schedule("Sunset Off", fadeOff, sunsetOff);
   }
   
   time_t nextDay = makeTime(0, 0, 0, tm.Day + 1, tm.Month, tm.Year);
