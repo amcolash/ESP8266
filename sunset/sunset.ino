@@ -1,11 +1,11 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h> 
+#include <WiFiManager.h>
 #include <ezTime.h>
 
 #include "ClickButton.h"
 #include "LittleFS.h"
 
-#include "config.h"
 #include "sundata.h"
 #include "util.h"
 
@@ -62,18 +62,14 @@ void setupPins() {
 }
 
 void setupWifi() {
-  log("Connecting to: " + String(ssid));
+  //WiFiManager, Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wm;
 
-  WiFi.mode(WIFI_STA); //We don't want the ESP to act as an AP
-  WiFi.begin(ssid, password); // Connect to the configured AP
-
-  // No point moving forward if we don't have a connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  bool res = wm.autoConnect("ESPSunset"); // password protected ap
+  if (!res) {
+    Serial.println("Failed to connect");
+    ESP.restart();
   }
-
-  Serial.println();
 
   // We have connected to wifi successfully
   log("WiFi connected");
