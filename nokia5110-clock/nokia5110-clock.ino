@@ -13,6 +13,8 @@
 #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
+#include "util.h"
+
 #define SCLK D5
 #define DIN D7
 #define DC D1
@@ -66,7 +68,7 @@ void setupDisplay() {
   display.setContrast(55);
 
   // set brightness with PWM (0-1024)
-  analogWrite(BL, 500);
+  analogWrite(BL, MAX_BRIGHTNESS);
 
   // Flip the display upside-down
   display.setRotation(2);
@@ -93,11 +95,16 @@ time_t rawtime;
 int minuteNum,hourNum, monthNum, dayNum;
 int vOffset = 6;
 
+bool showBrightness = true;
+
 void loop() {
   timeClient.update();
-  
+
   rawtime = timeClient.getEpochTime();
   rawtime = timezone.toLocal(rawtime);
+
+  // Update backlight brightness based on time of day
+  analogWrite(BL, getBrightness(rawtime));
 
   // Since all of these variables are already functions, fancy variable names
   minuteNum = minute(rawtime);
