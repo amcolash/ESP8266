@@ -5,6 +5,7 @@
 #include <ESP8266WebServer.h> 
 #include <time.h>
 #include <Timezone.h>
+#include <WiFiManager.h> 
 #include <Wire.h>
 
 #include <ESP8266HTTPClient.h>
@@ -17,6 +18,9 @@
 
 /************************* Constants / Globals *************************/
 #include "key.h"
+
+WiFiManager wifiManager;
+WiFiClient wifiClient;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
@@ -174,17 +178,10 @@ void setupDisplay() {
 
 void setupWifi() {
   // Start up wifi
-  Serial.print(F("\nConnecting to: "));
-  Serial.println(ssid);
-
-  WiFi.mode(WIFI_STA); //We don't want the ESP to act as an AP
-  WiFi.begin(ssid, pass); // Connect to the configured AP
-
-  // No point moving forward if we don't have a connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(250);
-    Serial.print(".");
-  }
+  Serial.print(F("\nSetting Up WiFi"));
+  
+  // Wait for wifi to connect using wifi manager
+  wifiManager.autoConnect("LED-Spectrum");
 
   // We have connected to wifi successfully
   Serial.println(F("\nWiFi connected"));
@@ -356,10 +353,10 @@ void updateData() {
 }
 
 void updateCurrentWeather() {
-  http.begin(currentEndpoint  + openweatherKey); //Specify the URL
-  int httpCode = http.GET();  //Make the request
+  http.begin(wifiClient, currentEndpoint  + openweatherKey); // Specify the URL
+  int httpCode = http.GET();  // Make the request
 
-  if (httpCode > 0) { //Check for the returning code
+  if (httpCode > 0) { // Check for the returning code
       String payload = http.getString();
 
       // JSON buffer based off of article https://randomnerdtutorials.com/decoding-and-encoding-json-with-arduino-or-esp8266/
@@ -370,6 +367,9 @@ void updateCurrentWeather() {
       deserializeJson(doc, payload);
       
       temperature = (int) doc["main"]["temp"];
+
+      Serial.print("Current Temp: ");
+      Serial.println(temperature);
   } else {
     temperature = -999;
   }
