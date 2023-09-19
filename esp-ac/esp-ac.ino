@@ -1,11 +1,16 @@
-
+#include <Adafruit_NeoPixel.h>
+#include <ArduinoHA.h>
+#include <Arduino_JSON.h>
+#include <DHT.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WiFi.h>
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <ir_Trotec.h>
+#include <WiFiClient.h>
 #include <WiFiManager.h>
-#include <ESP8266WiFi.h>
-#include <ArduinoHA.h>
-#include <DHT.h>
+
+#include "keys.h"
 
 #define BROKER_ADDR IPAddress(192, 168, 1, 101)
 
@@ -15,6 +20,11 @@ const uint16_t kIrLed = D1;    // IR Out Pin
 const uint16_t kRecvPin = D4;  // IR In Pin
 const uint16_t dhtVcc = D0;    // DHT-22 VCC (Since it is unstable and needs restarts)
 const uint16_t dhtData = D3;   // DHT-22 Data Pin
+
+const uint16_t ledPin = D5;
+const uint16_t photoPin = A0;
+
+#define UPDATE_SPEED 5
 
 IRTrotec3550 ac(kIrLed);  // Set the GPIO to be used for sending messages.
 IRrecv irrecv(kRecvPin, 1024, 15, true);
@@ -35,12 +45,31 @@ HAMqtt mqtt(client, device);
 // Please check the documentation of the HAHVAC class.
 HAHVAC hvac(
   "Portable_AC",
-  HAHVAC::TargetTemperatureFeature | HAHVAC::PowerFeature | HAHVAC::ModesFeature | HAHVAC::SwingFeature | HAHVAC::FanFeature);
+  HAHVAC::TargetTemperatureFeature | HAHVAC::PowerFeature | HAHVAC::ModesFeature | HAHVAC::SwingFeature | HAHVAC::FanFeature,
+  HASensorNumber::PrecisionP1);
 
-HASensorNumber humiditySensor("Humidity_Sensor", HASensorNumber::PrecisionP1);
+// Make temperature and humidity sensors to keep track of things. Need temp (additionally since it rounds to int for some reason from hvac)
+HASensorNumber temperatureSensor("AC_Temperature_Sensor", HASensorNumber::PrecisionP1);
+HASensorNumber humiditySensor("AC_Humidity_Sensor", HASensorNumber::PrecisionP1);
+
+Adafruit_NeoPixel pixels(1, ledPin, NEO_GRB + NEO_KHZ800);
+long nextLockUpdate = 0;
+long ledTimer = 0;
+
+struct Color {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
+#define MAX_BRIGHTNESS 180
+struct Color current = { r: 0, g: 0, b: 0 };
+struct Color target = { r: 0, g: 0, b: 0 };
+int lastBrightness = 0;
 
 void setup() {
   Serial.begin(115200);
+
   Serial.println("Starting...");
 
   // connect to wifi
@@ -48,6 +77,12 @@ void setup() {
 
   // Set up IR
   irrecv.enableIRIn();
+
+  // Set up status led
+  pixels.begin();
+
+  // Set up photoresistor
+  pinMode(photoPin, INPUT);
 
   // Set up temp/humidity sensor
   pinMode(dhtVcc, OUTPUT);
@@ -60,8 +95,8 @@ void setup() {
   ac.setMode(kTrotecCool);
   ac.setSwingV(true);
   ac.setPower(false);
-  ac.setFan(kTrotecFanLow);
-  ac.setTemp(69, false);
+  ac.setFan(kTrotecFanHigh);
+  ac.setTemp(62, false);
 
   // Unique ID must be set!
   byte mac[WL_MAC_ADDR_LENGTH];
@@ -97,9 +132,13 @@ void setup() {
   hvac.setFanModes(HAHVAC::FanMode::LowFanMode | HAHVAC::FanMode::MediumFanMode | HAHVAC::FanMode::HighFanMode);
   hvac.setSwingModes(HAHVAC::SwingMode::OnSwingMode | HAHVAC::SwingMode::OffSwingMode);
 
-  humiditySensor.setName("Humidity");
+  humiditySensor.setName("AC_Humidity");
   humiditySensor.setIcon("mdi:water-percent");
   humiditySensor.setUnitOfMeasurement("%");
+
+  temperatureSensor.setName("AC_Temperature");
+  temperatureSensor.setIcon("mdi:thermometer");
+  temperatureSensor.setUnitOfMeasurement("°F");
 
   mqtt.begin(BROKER_ADDR);
 
@@ -123,21 +162,112 @@ void loop() {
   }
 
   if (millis() > nextDataUpdate) {
-    float temperature = (dht.readTemperature() * (9 / 5.)) + 32;
-    float humidity = dht.readHumidity();
-
-    if (isnan(temperature) || isnan(humidity)) {
-      DHT_restart();
-    } else {
-      hvac.setCurrentTemperature(temperature);
-      humiditySensor.setValue(humidity);
-    }
-
+    updateDHT();
     nextDataUpdate = millis() + 2000;
   }
+
+  if (millis() > nextLockUpdate) {
+    updateLockStatus();
+    nextLockUpdate = millis() + 5000;
+  }
+
+  if (millis() > ledTimer) {
+    updateLed();
+    ledTimer = millis() + UPDATE_SPEED;
+  }
+
 }
 
 /** Utils */
+
+void updateDHT() {
+  float temperature = dht.readTemperature(true); // Read temperature and convert to Farenheit
+  float humidity = dht.readHumidity();
+
+  if (isnan(temperature) || isnan(humidity)) {
+    DHT_restart();
+  } else {
+    hvac.setCurrentTemperature(temperature);
+    humiditySensor.setValue(humidity);
+    temperatureSensor.setValue(temperature);
+  }
+}
+
+uint8_t counter = 0;
+void updateLed() {
+  if (current.r > target.r) current.r--;
+  if (current.r < target.r) current.r++;
+
+  if (current.g > target.g) current.g--;
+  if (current.g < target.g) current.g++;
+
+  if (current.b > target.b) current.b--;
+  if (current.b < target.b) current.b++;
+
+  pixels.setPixelColor(0, current.r, current.g, current.b);
+
+  uint16_t brightnessReading = analogRead(photoPin);
+  // int brightness = map(brightnessReading, 0, 1024, 1, 250);
+  
+  // Ease in-out for range 0-511, any reading from 512-1024 is set to MAX_BRIGHTNESS
+  int newBrightness = -(cos(3.1415 * brightnessReading / 512.) - 1) / 2. * MAX_BRIGHTNESS;
+  if (brightnessReading >= 512) newBrightness = MAX_BRIGHTNESS;
+
+  int brightness = 0.9 * lastBrightness + 0.1 * newBrightness;
+  brightness = max(1, brightness);
+  lastBrightness = brightness;
+
+  pixels.setBrightness(brightness);
+
+  counter++;
+  if (counter > 50) {
+    Serial.print("reading:");
+    Serial.print(brightnessReading);
+    Serial.print(",new:");
+    Serial.print(newBrightness);
+    Serial.print(",weighted:");
+    Serial.println(brightness);
+
+    counter = 0;
+  }
+
+  pixels.show();
+}
+
+void updateLockStatus() {
+  bool locked = getHaEntityState(HA_ENDPOINT);
+
+  Serial.print("Locked?: ");
+  Serial.println(locked);
+
+  target.r = locked ? 255 : 0;
+  target.g = locked ? 0   : 255;
+  target.b = 0;
+}
+
+bool getHaEntityState(String url) {
+  WiFiClient client;
+  HTTPClient http;
+
+  // Your IP address with path or Domain name with URL path 
+  http.begin(client, url);
+  http.addHeader("Authorization", HA_API_KEY);
+
+  int responseCode = http.GET();
+  if (responseCode == 200) {
+    JSONVar sensor = JSON.parse(http.getString());
+    String state = sensor["state"];
+    http.end();
+
+    return state == "on";
+  } else {
+    Serial.print("Something went wrong: ");
+    Serial.println(responseCode);
+  }
+
+  http.end();
+  return false;
+}
 
 void updateMqtt() {
   hvac.setTargetTemperature(ac.getTemp());
@@ -159,16 +289,16 @@ void DHT_restart() {
 
   digitalWrite(dhtVcc, LOW);
   digitalWrite(dhtData, LOW);
+
+  // Delay is needed before sampling begins. A cycle of sampling is skipped
+  // to prevent hiccups by halting the processor.
   delay(1);
 
   digitalWrite(dhtVcc, HIGH);
   digitalWrite(dhtData, HIGH);
-
-  // Delay is needed before sampling begins. A cycle of sampling is skipped
-  // to prevent hiccups by halting the processor.
 }
 
-void onAcUpdate(char* debugInfo) {
+void onAcUpdate(String debugInfo) {
   Serial.print("AC state updated: [");
   Serial.print(debugInfo);
   Serial.print("] ");
@@ -176,7 +306,7 @@ void onAcUpdate(char* debugInfo) {
 
   ac.send();
 
-  irDebounce = millis() + 100;
+  irDebounce = millis() + 500;
 }
 
 /** Callbacks */
@@ -195,6 +325,9 @@ void onTargetTemperatureCommand(HANumeric temperature, HAHVAC* sender) {
 void onPowerCommand(bool state, HAHVAC* sender) {
   ac.setPower(state);
   onAcUpdate("onPowerCommand");
+
+  if (state) sender->setMode(HAHVAC::CoolMode);
+  else sender->setMode(HAHVAC::OffMode);
 }
 
 void onModeCommand(HAHVAC::Mode mode, HAHVAC* sender) {
