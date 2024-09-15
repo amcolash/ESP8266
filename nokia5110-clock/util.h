@@ -49,8 +49,8 @@ int calculateDayOfYear(time_t time) {
   return calculateDayOfYear(tm.Day, tm.Month, tm.Year + 1970);
 }
 
-#define MIN_BRIGHTNESS 10
-#define MAX_BRIGHTNESS 500
+#define MIN_BRIGHTNESS 50
+#define MAX_BRIGHTNESS 750
 #define FADE_TIME 60
 
 uint16_t getBrightness(time_t time) {

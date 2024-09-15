@@ -14,6 +14,7 @@
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
 #include "util.h"
+#include "weather.h"
 
 #define SCLK D5
 #define DIN D7
@@ -65,7 +66,7 @@ void setupDisplay() {
   display.begin();
 
   // set contrast for display from 0-100 
-  display.setContrast(55);
+  display.setContrast(60);
 
   // set brightness with PWM (0-1024)
   analogWrite(BL, MAX_BRIGHTNESS);
@@ -77,18 +78,20 @@ void setupDisplay() {
 
   display.setTextColor(BLACK);
   display.setTextWrap(false);
-  display.setFont(&Orbitron_Bold_22);
 
   display.drawBitmap(display.width() / 2 - 4, display.height() / 2 - 8, wifiIcon, 16, 15, BLACK);
   display.display();
 }
 
-void drawCentredString(const String &buf, int x, int y) {
+void drawCentredString(const String &buf, int x, int y, bool degree) {
     int16_t x1, y1;
     uint16_t w, h;
     display.getTextBounds(buf, x, y, &x1, &y1, &w, &h); //calc width of new string
     display.setCursor(x - w / 2, y - h / 2);
     display.print(buf);
+
+    // if (degree) display.drawCircle(x1 + w / 2 + 2, y1 - h / 2, 2, BLACK);
+    if (degree) display.drawRect(x1 + w / 2 + 1, y1 - h / 2, 3, 3, BLACK);
 }
 
 time_t rawtime;
@@ -97,7 +100,17 @@ int vOffset = 6;
 
 bool showBrightness = true;
 
+int counter = 0;
+int temperature = ERROR;
+
 void loop() {
+  if (counter % (60 * 5) == 0) {
+    temperature = getWeather();
+    counter = 0;
+  }
+
+  counter++;
+
   timeClient.update();
 
   rawtime = timeClient.getEpochTime();
@@ -114,11 +127,19 @@ void loop() {
 
   display.clearDisplay();
 
+  display.setFont(&Orbitron_Bold_22);
   String time = String(String(hourNum) + ":" + String(minuteNum < 10 ? "0" + String(minuteNum) : String(minuteNum)));
-  drawCentredString(time, display.width() / 2, display.height() / 2 + vOffset);
+  drawCentredString(time, display.width() / 2, display.height() / 2 + vOffset, false);
 
+  display.setFont(&Orbitron_Bold_14);
   String date = String(String(monthNum) + "/" + String(dayNum));
-  drawCentredString(date, display.width() / 2, display.height() / 2 + 20 + vOffset);
+
+  int xOffset = temperature == ERROR ? 0 : -20;
+  drawCentredString(date, display.width() / 2 + xOffset, display.height() / 2 + 14 + vOffset, false);
+
+  if (temperature != ERROR) {
+    drawCentredString(String(temperature), display.width() / 2 - xOffset + 1, display.height() / 2 + 14 + vOffset, true);
+  }
 
   display.display();
 
