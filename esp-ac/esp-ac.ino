@@ -52,6 +52,9 @@ HAHVAC hvac(
 HASensorNumber temperatureSensor("AC_Temperature_Sensor", HASensorNumber::PrecisionP1);
 HASensorNumber humiditySensor("AC_Humidity_Sensor", HASensorNumber::PrecisionP1);
 
+// Make a sensor to keep track of the ambient light status
+HASensorNumber lightSensor("LivingRoom_Light_Sensor", HASensorNumber::PrecisionP1);
+
 Adafruit_NeoPixel pixels(1, ledPin, NEO_GRB + NEO_KHZ800);
 long nextLockUpdate = 0;
 long ledTimer = 0;
@@ -140,11 +143,15 @@ void setup() {
   temperatureSensor.setIcon("mdi:thermometer");
   temperatureSensor.setUnitOfMeasurement("°F");
 
+  lightSensor.setName("Ambient_Light");
+  lightSensor.setIcon("mdi:brightness-5");
+  lightSensor.setUnitOfMeasurement("%");
+
   mqtt.begin(BROKER_ADDR);
 
   onAcUpdate("Init");
 
-  // Mqtt loop takes a moment to establish connection - don't handle IR results for a moment after boot 
+  // Mqtt loop takes a moment to establish connection - don't handle IR results for a moment after boot
   irDebounce = millis() + 2000;
 }
 
@@ -163,6 +170,10 @@ void loop() {
 
   if (millis() > nextDataUpdate) {
     updateDHT();
+
+    float brightness = analogRead(photoPin) / 1024. * 100;
+    lightSensor.setValue(brightness);
+
     nextDataUpdate = millis() + 2000;
   }
 
@@ -208,7 +219,7 @@ void updateLed() {
 
   uint16_t brightnessReading = analogRead(photoPin);
   // int brightness = map(brightnessReading, 0, 1024, 1, 250);
-  
+
   // Ease in-out for range 0-511, any reading from 512-1024 is set to MAX_BRIGHTNESS
   int newBrightness = -(cos(3.1415 * brightnessReading / 512.) - 1) / 2. * MAX_BRIGHTNESS;
   if (brightnessReading >= 512) newBrightness = MAX_BRIGHTNESS;
@@ -249,7 +260,7 @@ bool getHaEntityState(String url) {
   WiFiClient client;
   HTTPClient http;
 
-  // Your IP address with path or Domain name with URL path 
+  // Your IP address with path or Domain name with URL path
   http.begin(client, url);
   http.addHeader("Authorization", HA_API_KEY);
 
@@ -316,7 +327,7 @@ void onTargetTemperatureCommand(HANumeric temperature, HAHVAC* sender) {
 
   ac.setTemp(temp, false);
   ac.setPower(true);
-  
+
   onAcUpdate("onTargetTemperatureCommand");
   sender->setTargetTemperature(temperature);  // report target temperature back to the HA panel
   sender->setMode(HAHVAC::Mode::CoolMode);    // also turn on power for HA
@@ -332,7 +343,7 @@ void onPowerCommand(bool state, HAHVAC* sender) {
 
 void onModeCommand(HAHVAC::Mode mode, HAHVAC* sender) {
   if (mode == HAHVAC::Mode::OffMode) ac.setPower(false);
-  if (mode == HAHVAC::Mode::CoolMode) ac.setMode(kTrotecCool);  
+  if (mode == HAHVAC::Mode::CoolMode) ac.setMode(kTrotecCool);
   if (mode == HAHVAC::Mode::DryMode) ac.setMode(kTrotecDry);
   if (mode == HAHVAC::Mode::FanOnlyMode) ac.setMode(kTrotecFan);
 
@@ -352,7 +363,7 @@ void onFanModeCommand(HAHVAC::FanMode mode, HAHVAC* sender) {
 void onSwingModeCommand(HAHVAC::SwingMode mode, HAHVAC* sender) {
   if (mode == HAHVAC::SwingMode::OffSwingMode) ac.setSwingV(false);
   if (mode == HAHVAC::SwingMode::OnSwingMode) ac.setSwingV(true);
-  
+
   onAcUpdate("onSwingModeCommand");
   sender->setSwingMode(mode);
 }
